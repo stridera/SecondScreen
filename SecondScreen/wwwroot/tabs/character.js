@@ -119,193 +119,196 @@ dialog.chr-sheet { width: min(420px, 94vw); max-height: 86vh; max-height: 86dvh;
 @media (max-width: 600px) { dialog.chr-sheet { margin: auto auto 0; width: 100vw; max-width: 100vw; border-radius: 18px 18px 0 0; padding-bottom: env(safe-area-inset-bottom); } }
 `;
 
-let S = null;
+/** One independent widget instance (docked panel or floating window): every instance gets its own state `S` and timers. Shared
+ *  caches (market.js) stay module-level. The body below only moved into this closure (review with `git diff -w`). */
+export function create() {
+  let S = null;
 
-const fmtN = (n) => (typeof n === "number" ? n.toLocaleString("en-US") : "-");
-const pctOf = (v, max) => (max > 0 ? Math.max(0, Math.min(100, (v / max) * 100)) : 0);
+  const fmtN = (n) => (typeof n === "number" ? n.toLocaleString("en-US") : "-");
+  const pctOf = (v, max) => (max > 0 ? Math.max(0, Math.min(100, (v / max) * 100)) : 0);
 
-function img(ctx, id, cls = "") {
-  if (!id) return `<span class="ph"></span>`;
-  return `<img${cls ? ` class="${cls}"` : ""} src="${esc(ctx.withToken(`/api/icon/${id}.png`))}" loading="lazy" decoding="async" alt="" draggable="false">`;
-}
-
-// ---- pieces ------------------------------------------------------------------------------------------------------------------------------
-
-function headerHtml(d) {
-  const cur = d.jobs.find((j) => j.id === d.classJobId);
-  const where = d.homeWorld && d.homeWorld !== d.world ? `${d.world} (home ${d.homeWorld})` : d.world;
-  const job = cur ? `${cur.name} Lv ${cur.level}` : d.level ? `Lv ${d.level}` : "";
-  return `${cur ? img(S.ctx, cur.iconId) : `<span class="ph"></span>`}`
-    + `<div class="chr-id"><div class="chr-nm">${esc(d.name)}</div><div class="chr-sub">${esc([where, job].filter(Boolean).join(" · "))}</div>`
-    + `<div class="chr-sub">${fmtN(d.gil)} gil${d.grandCompany ? ` · ${esc(d.grandCompany.name)} rank ${d.grandCompany.rank}` : ""}</div></div>`
-    + `<div class="chr-il" title="Average item level"><b>${d.itemLevel || "-"}</b><small>Item Level</small></div>`;
-}
-
-function slotHtml(g) {
-  if (!g || !g.itemId) {
-    return `<div class="chr-slot vacant${g && g.slot === "soul" ? " soul" : ""}"><span class="ph"></span><span class="t"><span class="n">${esc(g ? g.label : "")}</span><span class="s">Empty</span></span></div>`;
+  function img(ctx, id, cls = "") {
+    if (!id) return `<span class="ph"></span>`;
+    return `<img${cls ? ` class="${cls}"` : ""} src="${esc(ctx.withToken(`/api/icon/${id}.png`))}" loading="lazy" decoding="async" alt="" draggable="false">`;
   }
-  const color = RARITY_COLOR[g.rarity];
-  const bits = [`<b>i${g.ilvl || "?"}</b>`];
-  if (g.hq) bits.push(`<span class="hq">HQ</span>`);
-  if (g.condition != null && g.condition < 30) bits.push(`<span class="low">${g.condition}%</span>`);
-  if (g.materia && g.materia.length) bits.push(`◆${g.materia.length}`);
-  return `<button type="button" class="chr-slot${g.slot === "soul" ? " soul" : ""}" data-slot="${esc(g.slot)}" aria-label="${esc(g.name)}">${img(S.ctx, g.iconId)}`
-    + `<span class="t"><span class="n"${color ? ` style="color:${color}"` : ""}>${esc(g.name)}</span><span class="s">${bits.join(" · ")}</span></span></button>`;
-}
 
-function gearHtml(d) {
-  const by = new Map(d.gear.map((g) => [g.slot, g]));
-  const cells = [];
-  for (let i = 0; i < LEFT.length; i++) { cells.push(slotHtml(by.get(LEFT[i]))); cells.push(slotHtml(by.get(RIGHT[i]))); }
-  const soul = by.get("soul");
-  if (soul) cells.push(slotHtml(soul));
-  return cells.join("");
-}
+  // ---- pieces ------------------------------------------------------------------------------------------------------------------------------
 
-function jobsHtml(d) {
-  const out = [];
-  for (const [gid, title] of GROUPS) {
-    const list = d.jobs.filter((j) => j.group === gid);
-    if (!list.length) continue;
-    out.push(`<div class="chr-jg"><div class="chr-h">${title}</div><div class="chr-jobs">${list.map((j) => jobHtml(j, j.id === d.classJobId)).join("")}</div></div>`);
+  function headerHtml(d) {
+    const cur = d.jobs.find((j) => j.id === d.classJobId);
+    const where = d.homeWorld && d.homeWorld !== d.world ? `${d.world} (home ${d.homeWorld})` : d.world;
+    const job = cur ? `${cur.name} Lv ${cur.level}` : d.level ? `Lv ${d.level}` : "";
+    return `${cur ? img(S.ctx, cur.iconId) : `<span class="ph"></span>`}`
+      + `<div class="chr-id"><div class="chr-nm">${esc(d.name)}</div><div class="chr-sub">${esc([where, job].filter(Boolean).join(" · "))}</div>`
+      + `<div class="chr-sub">${fmtN(d.gil)} gil${d.grandCompany ? ` · ${esc(d.grandCompany.name)} rank ${d.grandCompany.rank}` : ""}</div></div>`
+      + `<div class="chr-il" title="Average item level"><b>${d.itemLevel || "-"}</b><small>Item Level</small></div>`;
   }
-  return out.join("") || `<div class="chr-sub">No jobs unlocked yet.</div>`;
-}
 
-function jobHtml(j, current) {
-  const max = j.max > 0 && j.level >= j.max;
-  const none = j.max === 0 || max;
-  const p = max ? 100 : pctOf(j.exp, j.expToNext);
-  const tip = max ? `${j.name} ${j.level} (max level)` : j.expToNext ? `${j.name} ${j.level} – ${fmtN(j.exp)} / ${fmtN(j.expToNext)} EXP` : `${j.name} ${j.level}`;
-  return `<div class="chr-job${max ? " max" : ""}${current ? " cur" : ""}${j.max === 0 ? " none" : ""}" title="${esc(tip)}"><span class="ic">${img(S.ctx, j.iconId)}<i class="lv">${j.level}</i></span>`
-    + `<span class="ab">${esc(j.abbr)}</span><i class="xp"${none && !max ? " hidden" : ""}><u style="width:${p.toFixed(1)}%"></u></i></div>`;
-}
-
-function curRow(c, extra = "", cls = "") {
-  const full = c.cap > 0 && c.count >= c.cap;
-  const label = c.name.replace(/^Allagan Tomestone of /, ""); // the "Tomestones" heading already says it; keeps the names distinct when narrow
-  return `<div class="chr-cur${full ? " full" : ""}${cls ? " " + cls : ""}" title="${esc(c.name)}">${img(S.ctx, c.iconId)}<span class="n">${esc(label)}</span>`
-    + `<span class="v">${fmtN(c.count)}${c.cap ? ` <small>/ ${fmtN(c.cap)}</small>` : ""}</span>`
-    + `<i class="bar2"><u style="width:${pctOf(c.count, c.cap).toFixed(1)}%"></u></i>${extra}</div>`;
-}
-
-function weeklyHtml(w) {
-  if (!w) return "";
-  const done = w.limit > 0 && w.acquired >= w.limit;
-  return `<div class="wk${done ? " done" : ""}"><span>Weekly</span><i class="bar2"><u style="width:${pctOf(w.acquired, w.limit).toFixed(1)}%"></u></i><b>${fmtN(w.acquired)} / ${fmtN(w.limit)}</b></div>`;
-}
-
-function currenciesHtml(d) {
-  const out = [];
-  out.push(curRow({ name: "Gil", iconId: GIL_ICON, count: d.gil, cap: d.gilCap }, "", "gil"));
-  if (d.tomestones.length) {
-    out.push(`<div class="chr-cg">${GROUP_TITLE.tomestone}</div>`);
-    for (const t of d.tomestones) out.push(curRow(t, weeklyHtml(t.weekly)));
+  function slotHtml(g) {
+    if (!g || !g.itemId) {
+      return `<div class="chr-slot vacant${g && g.slot === "soul" ? " soul" : ""}"><span class="ph"></span><span class="t"><span class="n">${esc(g ? g.label : "")}</span><span class="s">Empty</span></span></div>`;
+    }
+    const color = RARITY_COLOR[g.rarity];
+    const bits = [`<b>i${g.ilvl || "?"}</b>`];
+    if (g.hq) bits.push(`<span class="hq">HQ</span>`);
+    if (g.condition != null && g.condition < 30) bits.push(`<span class="low">${g.condition}%</span>`);
+    if (g.materia && g.materia.length) bits.push(`◆${g.materia.length}`);
+    return `<button type="button" class="chr-slot${g.slot === "soul" ? " soul" : ""}" data-slot="${esc(g.slot)}" aria-label="${esc(g.name)}">${img(S.ctx, g.iconId)}`
+      + `<span class="t"><span class="n"${color ? ` style="color:${color}"` : ""}>${esc(g.name)}</span><span class="s">${bits.join(" · ")}</span></span></button>`;
   }
-  for (const g of CUR_ORDER) {
-    const list = d.currencies.filter((c) => c.group === g);
-    if (!list.length) continue;
-    out.push(`<div class="chr-cg">${GROUP_TITLE[g] || g}</div>`);
-    for (const c of list) out.push(curRow(c));
+
+  function gearHtml(d) {
+    const by = new Map(d.gear.map((g) => [g.slot, g]));
+    const cells = [];
+    for (let i = 0; i < LEFT.length; i++) { cells.push(slotHtml(by.get(LEFT[i]))); cells.push(slotHtml(by.get(RIGHT[i]))); }
+    const soul = by.get("soul");
+    if (soul) cells.push(slotHtml(soul));
+    return cells.join("");
   }
-  return out.join("");
-}
 
-function setHtml(el, html) {
-  if (el.__html === html) return;
-  el.__html = html;
-  el.innerHTML = html;
-}
-
-function render() {
-  const d = S.data;
-  if (!d || !d.loggedIn) {
-    S.main.hidden = true;
-    S.empty.hidden = false;
-    S.empty.innerHTML = `${icon("character", "big")}<div>${S.error && !d ? (S.noFeed ? "This plugin build has no character support yet.<br>Update SecondScreen to see it here." : `Couldn't load the character (${esc(S.error)}). Retrying...`) : d ? "Not logged in to a character." : "Loading character..."}</div>`;
-    return;
+  function jobsHtml(d) {
+    const out = [];
+    for (const [gid, title] of GROUPS) {
+      const list = d.jobs.filter((j) => j.group === gid);
+      if (!list.length) continue;
+      out.push(`<div class="chr-jg"><div class="chr-h">${title}</div><div class="chr-jobs">${list.map((j) => jobHtml(j, j.id === d.classJobId)).join("")}</div></div>`);
+    }
+    return out.join("") || `<div class="chr-sub">No jobs unlocked yet.</div>`;
   }
-  S.main.hidden = false;
-  S.empty.hidden = true;
-  setHtml(S.head, headerHtml(d));
-  setHtml(S.gear, gearHtml(d));
-  setHtml(S.jobs, jobsHtml(d));
-  setHtml(S.curs, currenciesHtml(d));
-  const cur = d.jobs.find((j) => j.id === d.classJobId);
-  S.ctx.setBadge(cur ? `${cur.abbr} ${cur.level}` : "");
-  if (S.sheet && S.sheet.open && S.sheetSlot) fillSheet(S.sheetSlot);
-}
 
-// ---- item sheet ----------------------------------------------------------------------------------------------------------------------------
-
-function ensureSheet() {
-  if (S.sheet) return S.sheet;
-  const dlg = document.createElement("dialog");
-  dlg.className = "chr-sheet";
-  dlg.setAttribute("aria-label", "Item details");
-  dlg.addEventListener("click", (e) => { if (e.target === dlg || e.target.closest(".sh-x")) dlg.close(); });
-  dlg.addEventListener("close", () => { S.sheetSlot = null; });
-  document.body.append(dlg);
-  S.sheet = dlg;
-  return dlg;
-}
-
-function fillSheet(slot) {
-  const g = S.data && S.data.gear.find((x) => x.slot === slot);
-  if (!g || !g.itemId) { S.sheet.close(); return; }
-  const color = RARITY_COLOR[g.rarity];
-  const rows = [["Slot", esc(g.label)], ["Item level", String(g.ilvl || "?")], ["Quality", g.hq ? "High quality" : "Normal"]];
-  if (g.condition != null) rows.push(["Condition", `${g.condition}%`]);
-  if (g.spiritbond != null) rows.push(["Spiritbond", `${g.spiritbond}%`]);
-  if (g.materia && g.materia.length) rows.push(["Materia", g.materia.map(esc).join("<br>")]);
-  if (g.glamour) rows.push(["Glamoured as", esc(g.glamour.name)]);
-  S.sheet.innerHTML = `<div class="sh"><div class="sh-head">${img(S.ctx, g.iconId)}<div class="sh-t"><div class="sh-name"${color ? ` style="color:${color}"` : ""}>${esc(g.name)}</div>`
-    + `<div class="sh-sub">${esc([g.ilvl ? `Item Level ${g.ilvl}` : "", g.category].filter(Boolean).join(" · "))}</div></div><button type="button" class="sh-x" aria-label="Close">×</button></div>`
-    + `<ul class="sh-rows">${rows.map(([k, v]) => `<li><span>${k}</span><span>${v}</span></li>`).join("")}</ul></div>`;
-}
-
-function openSheet(slot) {
-  const dlg = ensureSheet();
-  S.sheetSlot = slot;
-  fillSheet(slot);
-  if (!dlg.open && S.sheetSlot) dlg.showModal();
-}
-
-// ---- data fetching -------------------------------------------------------------------------------------------------------------------------
-
-async function fetchCharacter() {
-  if (S.fetching) return;
-  S.fetching = true;
-  try {
-    const r = await fetch(S.ctx.withToken("/api/character"), { cache: "no-store" });
-    if (r.status === 404) S.noFeed = true;
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
-    S.error = ""; S.noFeed = false;
-    S.version = d.version;
-    S.data = d;
-    render();
-  } catch (e) {
-    S.error = e.message || String(e);
-    S.retryAt = Date.now() + 5000;
-    if (!S.data) render();
-  } finally {
-    S.fetching = false;
-    S.retryAt = Math.max(S.retryAt, Date.now() + 1000); // EXP moves the version often; never refetch faster than 1 Hz
+  function jobHtml(j, current) {
+    const max = j.max > 0 && j.level >= j.max;
+    const none = j.max === 0 || max;
+    const p = max ? 100 : pctOf(j.exp, j.expToNext);
+    const tip = max ? `${j.name} ${j.level} (max level)` : j.expToNext ? `${j.name} ${j.level} – ${fmtN(j.exp)} / ${fmtN(j.expToNext)} EXP` : `${j.name} ${j.level}`;
+    return `<div class="chr-job${max ? " max" : ""}${current ? " cur" : ""}${j.max === 0 ? " none" : ""}" title="${esc(tip)}"><span class="ic">${img(S.ctx, j.iconId)}<i class="lv">${j.level}</i></span>`
+      + `<span class="ab">${esc(j.abbr)}</span><i class="xp"${none && !max ? " hidden" : ""}><u style="width:${p.toFixed(1)}%"></u></i></div>`;
   }
-}
 
-// ---- widget contract -------------------------------------------------------------------------------------------------------------------------
-
-export function mount(el, ctx) {
-  if (!document.getElementById("chr-style")) {
-    const st = document.createElement("style");
-    st.id = "chr-style";
-    st.textContent = CSS;
-    document.head.append(st);
+  function curRow(c, extra = "", cls = "") {
+    const full = c.cap > 0 && c.count >= c.cap;
+    const label = c.name.replace(/^Allagan Tomestone of /, ""); // the "Tomestones" heading already says it; keeps the names distinct when narrow
+    return `<div class="chr-cur${full ? " full" : ""}${cls ? " " + cls : ""}" title="${esc(c.name)}">${img(S.ctx, c.iconId)}<span class="n">${esc(label)}</span>`
+      + `<span class="v">${fmtN(c.count)}${c.cap ? ` <small>/ ${fmtN(c.cap)}</small>` : ""}</span>`
+      + `<i class="bar2"><u style="width:${pctOf(c.count, c.cap).toFixed(1)}%"></u></i>${extra}</div>`;
   }
-  el.innerHTML = `
+
+  function weeklyHtml(w) {
+    if (!w) return "";
+    const done = w.limit > 0 && w.acquired >= w.limit;
+    return `<div class="wk${done ? " done" : ""}"><span>Weekly</span><i class="bar2"><u style="width:${pctOf(w.acquired, w.limit).toFixed(1)}%"></u></i><b>${fmtN(w.acquired)} / ${fmtN(w.limit)}</b></div>`;
+  }
+
+  function currenciesHtml(d) {
+    const out = [];
+    out.push(curRow({ name: "Gil", iconId: GIL_ICON, count: d.gil, cap: d.gilCap }, "", "gil"));
+    if (d.tomestones.length) {
+      out.push(`<div class="chr-cg">${GROUP_TITLE.tomestone}</div>`);
+      for (const t of d.tomestones) out.push(curRow(t, weeklyHtml(t.weekly)));
+    }
+    for (const g of CUR_ORDER) {
+      const list = d.currencies.filter((c) => c.group === g);
+      if (!list.length) continue;
+      out.push(`<div class="chr-cg">${GROUP_TITLE[g] || g}</div>`);
+      for (const c of list) out.push(curRow(c));
+    }
+    return out.join("");
+  }
+
+  function setHtml(el, html) {
+    if (el.__html === html) return;
+    el.__html = html;
+    el.innerHTML = html;
+  }
+
+  function render() {
+    const d = S.data;
+    if (!d || !d.loggedIn) {
+      S.main.hidden = true;
+      S.empty.hidden = false;
+      S.empty.innerHTML = `${icon("character", "big")}<div>${S.error && !d ? (S.noFeed ? "This plugin build has no character support yet.<br>Update SecondScreen to see it here." : `Couldn't load the character (${esc(S.error)}). Retrying...`) : d ? "Not logged in to a character." : "Loading character..."}</div>`;
+      return;
+    }
+    S.main.hidden = false;
+    S.empty.hidden = true;
+    setHtml(S.head, headerHtml(d));
+    setHtml(S.gear, gearHtml(d));
+    setHtml(S.jobs, jobsHtml(d));
+    setHtml(S.curs, currenciesHtml(d));
+    const cur = d.jobs.find((j) => j.id === d.classJobId);
+    S.ctx.setBadge(cur ? `${cur.abbr} ${cur.level}` : "");
+    if (S.sheet && S.sheet.open && S.sheetSlot) fillSheet(S.sheetSlot);
+  }
+
+  // ---- item sheet ----------------------------------------------------------------------------------------------------------------------------
+
+  function ensureSheet() {
+    if (S.sheet) return S.sheet;
+    const dlg = document.createElement("dialog");
+    dlg.className = "chr-sheet";
+    dlg.setAttribute("aria-label", "Item details");
+    dlg.addEventListener("click", (e) => { if (e.target === dlg || e.target.closest(".sh-x")) dlg.close(); });
+    dlg.addEventListener("close", () => { S.sheetSlot = null; });
+    document.body.append(dlg);
+    S.sheet = dlg;
+    return dlg;
+  }
+
+  function fillSheet(slot) {
+    const g = S.data && S.data.gear.find((x) => x.slot === slot);
+    if (!g || !g.itemId) { S.sheet.close(); return; }
+    const color = RARITY_COLOR[g.rarity];
+    const rows = [["Slot", esc(g.label)], ["Item level", String(g.ilvl || "?")], ["Quality", g.hq ? "High quality" : "Normal"]];
+    if (g.condition != null) rows.push(["Condition", `${g.condition}%`]);
+    if (g.spiritbond != null) rows.push(["Spiritbond", `${g.spiritbond}%`]);
+    if (g.materia && g.materia.length) rows.push(["Materia", g.materia.map(esc).join("<br>")]);
+    if (g.glamour) rows.push(["Glamoured as", esc(g.glamour.name)]);
+    S.sheet.innerHTML = `<div class="sh"><div class="sh-head">${img(S.ctx, g.iconId)}<div class="sh-t"><div class="sh-name"${color ? ` style="color:${color}"` : ""}>${esc(g.name)}</div>`
+      + `<div class="sh-sub">${esc([g.ilvl ? `Item Level ${g.ilvl}` : "", g.category].filter(Boolean).join(" · "))}</div></div><button type="button" class="sh-x" aria-label="Close">×</button></div>`
+      + `<ul class="sh-rows">${rows.map(([k, v]) => `<li><span>${k}</span><span>${v}</span></li>`).join("")}</ul></div>`;
+  }
+
+  function openSheet(slot) {
+    const dlg = ensureSheet();
+    S.sheetSlot = slot;
+    fillSheet(slot);
+    if (!dlg.open && S.sheetSlot) dlg.showModal();
+  }
+
+  // ---- data fetching -------------------------------------------------------------------------------------------------------------------------
+
+  async function fetchCharacter() {
+    if (S.fetching) return;
+    S.fetching = true;
+    try {
+      const r = await fetch(S.ctx.withToken("/api/character"), { cache: "no-store" });
+      if (r.status === 404) S.noFeed = true;
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      S.error = ""; S.noFeed = false;
+      S.version = d.version;
+      S.data = d;
+      render();
+    } catch (e) {
+      S.error = e.message || String(e);
+      S.retryAt = Date.now() + 5000;
+      if (!S.data) render();
+    } finally {
+      S.fetching = false;
+      S.retryAt = Math.max(S.retryAt, Date.now() + 1000); // EXP moves the version often; never refetch faster than 1 Hz
+    }
+  }
+
+  // ---- widget contract -------------------------------------------------------------------------------------------------------------------------
+
+  function mount(el, ctx) {
+    if (!document.getElementById("chr-style")) {
+      const st = document.createElement("style");
+      st.id = "chr-style";
+      st.textContent = CSS;
+      document.head.append(st);
+    }
+    el.innerHTML = `
     <div class="chr">
       <div class="chr-empty"></div>
       <div class="chr-main" hidden>
@@ -317,33 +320,36 @@ export function mount(el, ctx) {
         </div>
       </div>
     </div>`;
-  const root = el.querySelector(".chr");
-  S = {
-    ctx, root,
-    empty: root.querySelector(".chr-empty"), main: root.querySelector(".chr-main"),
-    head: root.querySelector(".chr-head"), gear: root.querySelector(".chr-gear"), jobs: root.querySelector(".chr-jobsw"), curs: root.querySelector(".chr-curs"),
-    data: null, version: null, fetching: false, retryAt: 0, error: "", noFeed: false,
-    sheet: null, sheetSlot: null,
-  };
-  root.addEventListener("click", (e) => {
-    const b = e.target.closest(".chr-slot[data-slot]");
-    if (b) openSheet(b.dataset.slot);
-  });
-  render();
-}
-
-export function update(payload) {
-  if (!S) return;
-  const v = payload.characterVersion;
-  if (v === undefined) { // older plugin build: try the endpoint once
-    if (!S.data && !S.noFeed) { S.noFeed = true; fetchCharacter(); }
-    return;
+    const root = el.querySelector(".chr");
+    S = {
+      ctx, root,
+      empty: root.querySelector(".chr-empty"), main: root.querySelector(".chr-main"),
+      head: root.querySelector(".chr-head"), gear: root.querySelector(".chr-gear"), jobs: root.querySelector(".chr-jobsw"), curs: root.querySelector(".chr-curs"),
+      data: null, version: null, fetching: false, retryAt: 0, error: "", noFeed: false,
+      sheet: null, sheetSlot: null,
+    };
+    root.addEventListener("click", (e) => {
+      const b = e.target.closest(".chr-slot[data-slot]");
+      if (b) openSheet(b.dataset.slot);
+    });
+    render();
   }
-  if (v !== S.version && !S.fetching && Date.now() >= S.retryAt) fetchCharacter();
-}
 
-export function unmount() {
-  if (!S) return;
-  S.sheet?.remove();
-  S = null;
+  function update(payload) {
+    if (!S) return;
+    const v = payload.characterVersion;
+    if (v === undefined) { // older plugin build: try the endpoint once
+      if (!S.data && !S.noFeed) { S.noFeed = true; fetchCharacter(); }
+      return;
+    }
+    if (v !== S.version && !S.fetching && Date.now() >= S.retryAt) fetchCharacter();
+  }
+
+  function unmount() {
+    if (!S) return;
+    S.sheet?.remove();
+    S = null;
+  }
+
+  return { mount, update, unmount };
 }

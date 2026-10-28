@@ -30,6 +30,10 @@ const P = {
   chat: '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8"/><path d="M8 13h5"/>',
   character: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/><path d="M12 14v7"/>',
   chevron: '<path d="m6 9 6 6 6-6"/>',
+  apps: '<circle cx="5.5" cy="5.5" r="1.7" fill="currentColor"/><circle cx="12" cy="5.5" r="1.7" fill="currentColor"/><circle cx="18.5" cy="5.5" r="1.7" fill="currentColor"/><circle cx="5.5" cy="12" r="1.7" fill="currentColor"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/><circle cx="18.5" cy="12" r="1.7" fill="currentColor"/><circle cx="5.5" cy="18.5" r="1.7" fill="currentColor"/><circle cx="12" cy="18.5" r="1.7" fill="currentColor"/><circle cx="18.5" cy="18.5" r="1.7" fill="currentColor"/>',
+  maximize: '<rect x="4" y="4" width="16" height="16" rx="2"/>',
+  restore: '<rect x="3" y="8" width="13" height="13" rx="2"/><path d="M8 8V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-3"/>',
+  dock: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M12 12v6"/><path d="m8.5 14.5 3.5 3.5 3.5-3.5"/>',
 };
 
 const GRIP = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>';

@@ -102,235 +102,241 @@ const CSS = `
 .wbody[data-size="compact"] .chat-chip { height: 28px; padding: 0 9px 0 8px; font-size: .74rem; }
 `;
 
-let S = null;
+/** One independent widget instance (docked panel or floating window): every instance gets its own state `S` and timers. Shared
+ *  caches (market.js) stay module-level. The body below only moved into this closure (review with `git diff -w`). */
+export function create() {
+  let S = null;
 
-const store = {
-  get: (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } },
-  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
-};
+  const store = {
+    get: (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+  };
 
-function loadFilter() {
-  try {
-    const a = JSON.parse(store.get("ss.chat.filter", "[]"));
-    return new Set(Array.isArray(a) ? a.filter((id) => FILTERS.some((f) => f.id === id)) : []);
-  } catch { return new Set(); }
-}
-
-const pad = (n) => String(n).padStart(2, "0");
-const timeText = (ts) => { const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
-
-// ---- model -> DOM ----------------------------------------------------------------------------------------------------------------
-
-function matches(m) {
-  if (S.filter.size && !S.filter.has(filterOf(m.ch))) return false;
-  if (S.query && !m.lower.includes(S.query)) return false;
-  return true;
-}
-
-function highlight(text) {
-  if (!S.query) return esc(text);
-  const lower = text.toLowerCase();
-  let out = "", i = 0;
-  for (;;) {
-    const j = lower.indexOf(S.query, i);
-    if (j < 0 || !S.query) break;
-    out += esc(text.slice(i, j)) + "<mark>" + esc(text.slice(j, j + S.query.length)) + "</mark>";
-    i = j + S.query.length;
+  function loadFilter() {
+    try {
+      const a = JSON.parse(store.get("ss.chat.filter", "[]"));
+      return new Set(Array.isArray(a) ? a.filter((id) => FILTERS.some((f) => f.id === id)) : []);
+    } catch { return new Set(); }
   }
-  return out + esc(text.slice(i));
-}
 
-function rowEl(m) {
-  const el = document.createElement("div");
-  const kind = m.ch === "tellin" || m.ch === "tellout" ? "tell" : m.ch === "emote" ? "emote" : m.ch === "system" || m.ch === "other" ? m.ch : "";
-  const speaker = m.sender && m.ch !== "system" && m.ch !== "other" && m.ch !== "echo";
-  el.className = `cm${kind ? " " + kind : ""}${speaker ? "" : " nosender"}`;
-  el.style.setProperty("--c", colorOf(m.ch));
-  let who = "";
-  if (speaker) {
-    const name = esc(m.sender) + (m.world ? `<small>@${esc(m.world)}</small>` : "");
-    who = `<span class="cm-s">${m.ch === "tellin" ? "" : m.ch === "tellout" ? "To " : ""}${name}</span>`;
+  const pad = (n) => String(n).padStart(2, "0");
+  const timeText = (ts) => { const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+
+  // ---- model -> DOM ----------------------------------------------------------------------------------------------------------------
+
+  function matches(m) {
+    if (S.filter.size && !S.filter.has(filterOf(m.ch))) return false;
+    if (S.query && !m.lower.includes(S.query)) return false;
+    return true;
   }
-  let tag = esc(shortOf(m.ch));
-  if (m.ch === "tellin") tag = "Tell ←";
-  else if (m.ch === "tellout") tag = "Tell →";
-  el.innerHTML = `<span class="cm-t">${timeText(m.ts)}</span><span class="cm-ch">${tag}</span>${who}<span class="cm-x">${highlight(m.text)}</span>`;
-  return el;
-}
 
-function showPill() {
-  S.pill.classList.toggle("show", S.unseen > 0);
-  S.pill.textContent = `New messages ↓${S.unseen > 1 ? ` (${S.unseen})` : ""}`;
-  S.ctx.setBadge(S.unseen > 0 ? String(S.unseen > 99 ? "99+" : S.unseen) : "");
-}
-
-const atBottom = () => S.log.scrollHeight - S.log.scrollTop - S.log.clientHeight < 28;
-
-function pin() {
-  S.log.scrollTop = S.log.scrollHeight;
-  S.unseen = 0;
-  showPill();
-}
-
-function emptyHtml() {
-  if (S.error && !S.loaded) return `${icon("chat", "big")}<div>${S.noEndpoint ? "This plugin build has no chat support yet.<br>Update SecondScreen to see the game chat here." : `Couldn't load the chat (${esc(S.error)}). Retrying...`}</div>`;
-  if (!S.loaded) return `${icon("chat", "big")}<div>Loading chat...</div>`;
-  if (!S.msgs.length) return `${icon("chat", "big")}<div>No chat yet.<br>New messages show up here as they arrive in game.</div>`;
-  return `${icon("chat", "big")}<div>No messages match the current filter.</div>`;
-}
-
-/** Rebuild the visible list from the model (filter / search changes, first load). */
-function renderAll() {
-  const frag = document.createDocumentFragment();
-  let n = 0;
-  for (const m of S.msgs) if (matches(m)) { frag.append(rowEl(m)); n++; }
-  S.shown = n;
-  if (n === 0) {
-    const e = document.createElement("div");
-    e.className = "chat-empty";
-    e.innerHTML = emptyHtml();
-    frag.append(e);
-  }
-  S.log.replaceChildren(frag);
-  S.stick = true;
-  pin();
-}
-
-/** Append freshly fetched lines without touching the rest of the DOM. */
-function appendNew(fresh) {
-  const vis = fresh.filter(matches);
-  if (S.shown === 0) { // the empty-state node (if any) goes away on the first visible line
-    if (vis.length) { S.log.replaceChildren(); } else { return; }
-  }
-  const wasBottom = S.stick;
-  const frag = document.createDocumentFragment();
-  for (const m of vis) frag.append(rowEl(m));
-  S.log.append(frag);
-  S.shown += vis.length;
-  while (S.shown > MAX_LINES && S.log.firstElementChild) { S.log.firstElementChild.remove(); S.shown--; }
-  if (wasBottom) pin();
-  else { S.unseen += vis.length; showPill(); }
-}
-
-function renderChips() {
-  const all = S.filter.size === 0;
-  S.chips.querySelectorAll("[data-f]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.f === "all" ? all : S.filter.has(b.dataset.f))));
-}
-
-// ---- data ----------------------------------------------------------------------------------------------------------------------------
-
-async function fetchChat() {
-  if (S.fetching) return;
-  S.fetching = true;
-  try {
-    const since = S.lastSeq > 0 ? S.lastSeq : 0;
-    const r = await fetch(S.ctx.withToken(`/api/chat?since=${since}`), { cache: "no-store" });
-    if (r.status === 404) S.noEndpoint = true;
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
-    S.error = ""; S.noEndpoint = false;
-    const first = !S.loaded;
-    S.loaded = true;
-    let reset = false;
-    if (S.epoch !== null && d.epoch !== S.epoch) { S.msgs = []; S.lastSeq = 0; reset = true; } // plugin restarted: start over
-    S.epoch = d.epoch;
-    const fresh = [];
-    for (const m of d.messages || []) {
-      if (m.seq <= S.lastSeq) continue;
-      m.lower = `${m.text} ${m.sender || ""}`.toLowerCase();
-      S.msgs.push(m);
-      fresh.push(m);
+  function highlight(text) {
+    if (!S.query) return esc(text);
+    const lower = text.toLowerCase();
+    let out = "", i = 0;
+    for (;;) {
+      const j = lower.indexOf(S.query, i);
+      if (j < 0 || !S.query) break;
+      out += esc(text.slice(i, j)) + "<mark>" + esc(text.slice(j, j + S.query.length)) + "</mark>";
+      i = j + S.query.length;
     }
-    S.lastSeq = d.seq;
-    if (S.msgs.length > MAX_LINES) S.msgs.splice(0, S.msgs.length - MAX_LINES);
-    if (first || reset) renderAll();
-    else if (fresh.length) appendNew(fresh);
-  } catch (e) {
-    S.error = e.message || String(e);
-    S.retryAt = Date.now() + 5000;
-    if (!S.loaded) { S.log.innerHTML = `<div class="chat-empty">${emptyHtml()}</div>`; }
-  } finally {
-    S.fetching = false;
-    S.retryAt = Math.max(S.retryAt, Date.now() + 250);
+    return out + esc(text.slice(i));
   }
-}
 
-// ---- widget contract -------------------------------------------------------------------------------------------------------------------
-
-export function mount(el, ctx) {
-  if (!document.getElementById("chat-style")) {
-    const st = document.createElement("style");
-    st.id = "chat-style";
-    st.textContent = CSS;
-    document.head.append(st);
+  function rowEl(m) {
+    const el = document.createElement("div");
+    const kind = m.ch === "tellin" || m.ch === "tellout" ? "tell" : m.ch === "emote" ? "emote" : m.ch === "system" || m.ch === "other" ? m.ch : "";
+    const speaker = m.sender && m.ch !== "system" && m.ch !== "other" && m.ch !== "echo";
+    el.className = `cm${kind ? " " + kind : ""}${speaker ? "" : " nosender"}`;
+    el.style.setProperty("--c", colorOf(m.ch));
+    let who = "";
+    if (speaker) {
+      const name = esc(m.sender) + (m.world ? `<small>@${esc(m.world)}</small>` : "");
+      who = `<span class="cm-s">${m.ch === "tellin" ? "" : m.ch === "tellout" ? "To " : ""}${name}</span>`;
+    }
+    let tag = esc(shortOf(m.ch));
+    if (m.ch === "tellin") tag = "Tell ←";
+    else if (m.ch === "tellout") tag = "Tell →";
+    el.innerHTML = `<span class="cm-t">${timeText(m.ts)}</span><span class="cm-ch">${tag}</span>${who}<span class="cm-x">${highlight(m.text)}</span>`;
+    return el;
   }
-  el.innerHTML = `
+
+  function showPill() {
+    S.pill.classList.toggle("show", S.unseen > 0);
+    S.pill.textContent = `New messages ↓${S.unseen > 1 ? ` (${S.unseen})` : ""}`;
+    S.ctx.setBadge(S.unseen > 0 ? String(S.unseen > 99 ? "99+" : S.unseen) : "");
+  }
+
+  const atBottom = () => S.log.scrollHeight - S.log.scrollTop - S.log.clientHeight < 28;
+
+  function pin() {
+    S.log.scrollTop = S.log.scrollHeight;
+    S.unseen = 0;
+    showPill();
+  }
+
+  function emptyHtml() {
+    if (S.error && !S.loaded) return `${icon("chat", "big")}<div>${S.noEndpoint ? "This plugin build has no chat support yet.<br>Update SecondScreen to see the game chat here." : `Couldn't load the chat (${esc(S.error)}). Retrying...`}</div>`;
+    if (!S.loaded) return `${icon("chat", "big")}<div>Loading chat...</div>`;
+    if (!S.msgs.length) return `${icon("chat", "big")}<div>No chat yet.<br>New messages show up here as they arrive in game.</div>`;
+    return `${icon("chat", "big")}<div>No messages match the current filter.</div>`;
+  }
+
+  /** Rebuild the visible list from the model (filter / search changes, first load). */
+  function renderAll() {
+    const frag = document.createDocumentFragment();
+    let n = 0;
+    for (const m of S.msgs) if (matches(m)) { frag.append(rowEl(m)); n++; }
+    S.shown = n;
+    if (n === 0) {
+      const e = document.createElement("div");
+      e.className = "chat-empty";
+      e.innerHTML = emptyHtml();
+      frag.append(e);
+    }
+    S.log.replaceChildren(frag);
+    S.stick = true;
+    pin();
+  }
+
+  /** Append freshly fetched lines without touching the rest of the DOM. */
+  function appendNew(fresh) {
+    const vis = fresh.filter(matches);
+    if (S.shown === 0) { // the empty-state node (if any) goes away on the first visible line
+      if (vis.length) { S.log.replaceChildren(); } else { return; }
+    }
+    const wasBottom = S.stick;
+    const frag = document.createDocumentFragment();
+    for (const m of vis) frag.append(rowEl(m));
+    S.log.append(frag);
+    S.shown += vis.length;
+    while (S.shown > MAX_LINES && S.log.firstElementChild) { S.log.firstElementChild.remove(); S.shown--; }
+    if (wasBottom) pin();
+    else { S.unseen += vis.length; showPill(); }
+  }
+
+  function renderChips() {
+    const all = S.filter.size === 0;
+    S.chips.querySelectorAll("[data-f]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.f === "all" ? all : S.filter.has(b.dataset.f))));
+  }
+
+  // ---- data ----------------------------------------------------------------------------------------------------------------------------
+
+  async function fetchChat() {
+    if (S.fetching) return;
+    S.fetching = true;
+    try {
+      const since = S.lastSeq > 0 ? S.lastSeq : 0;
+      const r = await fetch(S.ctx.withToken(`/api/chat?since=${since}`), { cache: "no-store" });
+      if (r.status === 404) S.noEndpoint = true;
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      S.error = ""; S.noEndpoint = false;
+      const first = !S.loaded;
+      S.loaded = true;
+      let reset = false;
+      if (S.epoch !== null && d.epoch !== S.epoch) { S.msgs = []; S.lastSeq = 0; reset = true; } // plugin restarted: start over
+      S.epoch = d.epoch;
+      const fresh = [];
+      for (const m of d.messages || []) {
+        if (m.seq <= S.lastSeq) continue;
+        m.lower = `${m.text} ${m.sender || ""}`.toLowerCase();
+        S.msgs.push(m);
+        fresh.push(m);
+      }
+      S.lastSeq = d.seq;
+      if (S.msgs.length > MAX_LINES) S.msgs.splice(0, S.msgs.length - MAX_LINES);
+      if (first || reset) renderAll();
+      else if (fresh.length) appendNew(fresh);
+    } catch (e) {
+      S.error = e.message || String(e);
+      S.retryAt = Date.now() + 5000;
+      if (!S.loaded) { S.log.innerHTML = `<div class="chat-empty">${emptyHtml()}</div>`; }
+    } finally {
+      S.fetching = false;
+      S.retryAt = Math.max(S.retryAt, Date.now() + 250);
+    }
+  }
+
+  // ---- widget contract -------------------------------------------------------------------------------------------------------------------
+
+  function mount(el, ctx) {
+    if (!document.getElementById("chat-style")) {
+      const st = document.createElement("style");
+      st.id = "chat-style";
+      st.textContent = CSS;
+      document.head.append(st);
+    }
+    el.innerHTML = `
     <div class="chat">
       <div class="chat-top"><input type="search" placeholder="Search chat" aria-label="Search chat" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false"><button type="button" class="chat-clear" aria-label="Clear search" hidden>×</button></div>
       <div class="chat-chips" role="group" aria-label="Channels"><button type="button" class="chat-chip all" data-f="all" aria-pressed="true">All</button>${FILTERS.map((f) =>
         `<button type="button" class="chat-chip" data-f="${f.id}" aria-pressed="false" style="--c:${f.color || COLORS[f.id] || COLORS.other}"><i></i>${f.label}</button>`).join("")}</div>
       <div class="chat-wrap"><div class="chat-log" role="log" aria-live="off" aria-label="Chat"></div><button type="button" class="chat-pill" aria-label="Jump to the newest messages"></button></div>
     </div>`;
-  const root = el.querySelector(".chat");
-  S = {
-    ctx, root,
-    input: root.querySelector("input"), clear: root.querySelector(".chat-clear"), chips: root.querySelector(".chat-chips"),
-    log: root.querySelector(".chat-log"), pill: root.querySelector(".chat-pill"),
-    filter: loadFilter(), query: "", msgs: [], shown: 0, unseen: 0, stick: true,
-    lastSeq: -1, epoch: null, loaded: false, fetching: false, retryAt: 0, error: "", noEndpoint: false, searchTimer: 0,
-  };
+    const root = el.querySelector(".chat");
+    S = {
+      ctx, root,
+      input: root.querySelector("input"), clear: root.querySelector(".chat-clear"), chips: root.querySelector(".chat-chips"),
+      log: root.querySelector(".chat-log"), pill: root.querySelector(".chat-pill"),
+      filter: loadFilter(), query: "", msgs: [], shown: 0, unseen: 0, stick: true,
+      lastSeq: -1, epoch: null, loaded: false, fetching: false, retryAt: 0, error: "", noEndpoint: false, searchTimer: 0,
+    };
 
-  root.addEventListener("click", (e) => {
-    const chip = e.target.closest(".chat-chip");
-    if (chip) {
-      const id = chip.dataset.f;
-      if (id === "all") S.filter.clear();
-      else if (S.filter.has(id)) S.filter.delete(id);
-      else S.filter.add(id);
-      store.set("ss.chat.filter", JSON.stringify([...S.filter]));
-      renderChips();
-      renderAll();
-    } else if (e.target.closest(".chat-clear")) {
-      S.input.value = ""; S.query = ""; S.clear.hidden = true; renderAll(); S.input.focus();
-    } else if (e.target.closest(".chat-pill")) {
-      pin();
+    root.addEventListener("click", (e) => {
+      const chip = e.target.closest(".chat-chip");
+      if (chip) {
+        const id = chip.dataset.f;
+        if (id === "all") S.filter.clear();
+        else if (S.filter.has(id)) S.filter.delete(id);
+        else S.filter.add(id);
+        store.set("ss.chat.filter", JSON.stringify([...S.filter]));
+        renderChips();
+        renderAll();
+      } else if (e.target.closest(".chat-clear")) {
+        S.input.value = ""; S.query = ""; S.clear.hidden = true; renderAll(); S.input.focus();
+      } else if (e.target.closest(".chat-pill")) {
+        pin();
+      }
+    });
+    S.input.addEventListener("input", () => {
+      S.clear.hidden = !S.input.value;
+      clearTimeout(S.searchTimer);
+      S.searchTimer = setTimeout(() => { S.query = S.input.value.trim().toLowerCase(); renderAll(); }, 140);
+    });
+    S.input.addEventListener("keydown", (e) => { if (e.key === "Enter") S.input.blur(); });
+    S.log.addEventListener("scroll", () => {
+      S.stick = atBottom();
+      if (S.stick && S.unseen) { S.unseen = 0; showPill(); }
+    }, { passive: true });
+
+    renderChips();
+    S.log.innerHTML = `<div class="chat-empty">${emptyHtml()}</div>`;
+  }
+
+  function update(payload) {
+    if (!S) return;
+    const seq = payload.chatSeq;
+    if (seq === undefined) { // older plugin build without the chat feed: probe the endpoint once
+      if (!S.loaded && !S.noEndpoint && !S.fetching && Date.now() >= S.retryAt) fetchChat();
+      return;
     }
-  });
-  S.input.addEventListener("input", () => {
-    S.clear.hidden = !S.input.value;
+    if (S.stick && S.log.scrollHeight - S.log.clientHeight > 0 && !atBottom()) pin(); // re-attached panels lose their scroll position
+    if (seq !== S.lastSeq && !S.fetching && Date.now() >= S.retryAt) {
+      if (seq < S.lastSeq) { S.lastSeq = 0; S.epoch = null; S.msgs = []; S.loaded = false; } // server restarted
+      fetchChat();
+    }
+  }
+
+  function resize() {
+    if (S && S.stick) pin();
+  }
+
+  function unmount() {
+    if (!S) return;
     clearTimeout(S.searchTimer);
-    S.searchTimer = setTimeout(() => { S.query = S.input.value.trim().toLowerCase(); renderAll(); }, 140);
-  });
-  S.input.addEventListener("keydown", (e) => { if (e.key === "Enter") S.input.blur(); });
-  S.log.addEventListener("scroll", () => {
-    S.stick = atBottom();
-    if (S.stick && S.unseen) { S.unseen = 0; showPill(); }
-  }, { passive: true });
-
-  renderChips();
-  S.log.innerHTML = `<div class="chat-empty">${emptyHtml()}</div>`;
-}
-
-export function update(payload) {
-  if (!S) return;
-  const seq = payload.chatSeq;
-  if (seq === undefined) { // older plugin build without the chat feed: probe the endpoint once
-    if (!S.loaded && !S.noEndpoint && !S.fetching && Date.now() >= S.retryAt) fetchChat();
-    return;
+    S = null;
   }
-  if (S.stick && S.log.scrollHeight - S.log.clientHeight > 0 && !atBottom()) pin(); // re-attached panels lose their scroll position
-  if (seq !== S.lastSeq && !S.fetching && Date.now() >= S.retryAt) {
-    if (seq < S.lastSeq) { S.lastSeq = 0; S.epoch = null; S.msgs = []; S.loaded = false; } // server restarted
-    fetchChat();
-  }
-}
 
-export function resize() {
-  if (S && S.stick) pin();
-}
-
-export function unmount() {
-  if (!S) return;
-  clearTimeout(S.searchTimer);
-  S = null;
+  return { mount, update, resize, unmount };
 }

@@ -11,6 +11,7 @@ import {
 import { DEFS } from "./widgets.js";
 import { h, clamp, openPopover, closePopover, toast } from "./ui.js";
 import { icon } from "./icons.js";
+import { Floating } from "./floating.js";
 
 const DEF_BY_ID = new Map(DEFS.map((d) => [d.id, d]));
 
@@ -32,6 +33,7 @@ export class Dashboard {
     this.listeners = new Set();
     this.dirty = true;
     this.relayoutQueued = false;
+    this.floats = new Floating(this);   // floating windows / phone sheets (own layer, survive layout re-renders)
 
     this.buildNav();
     this.bindStage();
@@ -103,6 +105,50 @@ export class Dashboard {
     if (!this.dirty) return;
     this.dirty = false;
     for (const w of this.visible) w.update(this.payload);
+    for (const w of this.floats.widgets()) if (!this.visible.has(w)) w.update(this.payload); // floating instances get the same push
+  }
+
+  // ---- floating windows ------------------------------------------------------------------------
+
+  /** In a column, or (tab mode) reachable as a tab. */
+  isDocked(id) { return !!this.cur && (this.cur.tabs || placedIds(this.cur.layout).has(id)); }
+
+  /** Launcher entry point: open `id` in a floating window / sheet, or focus the one already open. */
+  openFloating(id) {
+    const def = DEF_BY_ID.get(id);
+    if (!def) return;
+    if (this.floats.has(id)) { this.floats.focus(id, true); return; }
+    // A single-instance widget (map) cannot be mounted twice: if it is docked, point at the docked panel instead.
+    if (def.single && this.isDocked(id)) { this.reveal(id); return; }
+    this.floats.open(id);
+  }
+
+  /** Scroll to and flash the docked panel (tab mode: switch to its tab). */
+  reveal(id) {
+    if (this.cur.tabs) {
+      if (this.tab !== id) { this.tab = id; localStorage.setItem("ss.tab", id); this.render(); }
+      return;
+    }
+    const w = this.widgets.get(id);
+    if (!w || !w.panel.isConnected) return;
+    w.panel.scrollIntoView({ block: "nearest", inline: "nearest" });
+    w.panel.classList.remove("flash");
+    void w.panel.offsetWidth; // restart the animation
+    w.panel.classList.add("flash");
+    setTimeout(() => w.panel.classList.remove("flash"), 1400);
+  }
+
+  /** The window's Dock button: close the window and add the widget to the narrowest column of the current layout. */
+  dock(id) {
+    if (this.cur.tabs) return;
+    this.floats.close(id, { refocus: false });
+    if (this.isDocked(id)) { this.reveal(id); return; }
+    const cols = this.cur.layout.columns;
+    let ci = 0;
+    cols.forEach((c, i) => { if (c.widthFr < cols[ci].widthFr) ci = i; });
+    this.commit(addPanel(this.cur.layout, id, ci));
+    toast(`${DEF_BY_ID.get(id).title} docked.`);
+    this.floats.opener?.focus({ preventScroll: true });
   }
 
   setEdit(on) {
@@ -152,6 +198,7 @@ export class Dashboard {
     this.nav.hidden = !tabs;
     if (tabs) this.renderTabs(); else this.renderGrid();
     for (const w of this.visible) w.show(this.payload);
+    this.floats.sync();
     this.emit();
   }
 

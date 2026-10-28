@@ -1,9 +1,11 @@
-// Top bar controls: Edit layout / Done, + Column, the Layouts menu (presets, share, reset) and the share dialog.
+// Top bar controls: Edit layout / Done, + Column, the Layouts menu (presets, share, reset), the Panels launcher (launcher.js)
+// and the share dialog.
 
 import { PRESETS, exportLayout } from "./layout.js";
 import { h, openPopover, closePopover, toast, isPopoverOpen } from "./ui.js";
 import { icon } from "./icons.js";
 import { initScreenControls, showFullscreenHint } from "./screen.js";
+import { initLauncher } from "./launcher.js";
 
 export function initShell(dash) {
   const $ = (id) => document.getElementById(id);
@@ -29,6 +31,7 @@ export function initShell(dash) {
 
   initShareDialog(dash);
   initScreenControls();
+  initLauncher(dash);
 }
 
 function openMenu(anchor, dash) {

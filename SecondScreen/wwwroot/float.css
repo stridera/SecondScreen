@@ -1,0 +1,73 @@
+/* Floating windows (wide screens) and full-screen sheets (tab mode / phones). Logic: js/floating.js, launcher: js/launcher.js.
+   Layering: dashboard < #float-layer (50) < popover (60) < toast (80) < notification layers (150-200). */
+
+.float-layer { position: fixed; inset: 0; z-index: 50; pointer-events: none; }
+
+.fwin { position: absolute; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; pointer-events: auto;
+  isolation: isolate; outline: none; border: 1px solid var(--border-strong); border-radius: var(--radius);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .05) inset, 0 22px 54px rgba(0, 0, 0, .6), 0 4px 16px rgba(0, 0, 0, .4);
+  animation: fwin-in .16s var(--ease); }
+/* The translucent panel chrome + blur sit on a pseudo element: a backdrop-filter on .fwin itself would become the containing
+   block of position:fixed descendants (the tracker's drag ghost). */
+.fwin::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .055), rgba(255, 255, 255, .025)), rgba(20, 24, 33, .93);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.fwin.front { border-color: rgba(106, 168, 255, .42); }
+.fwin:not(.front) .fwin-head { opacity: .78; }
+@keyframes fwin-in { from { opacity: 0; transform: translateY(6px) scale(.985); } }
+
+.fwin-head { flex: none; display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 10px 0 13px; border-bottom: 1px solid var(--border);
+  cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.fwin.moving .fwin-head { cursor: grabbing; }
+.fwin.max .fwin-head { cursor: default; }
+.fwin-btn { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border-radius: 8px; border: 1px solid transparent;
+  background: transparent; color: var(--muted); cursor: pointer; touch-action: manipulation; }
+.fwin-btn:hover { color: var(--text); background: var(--surface-2); }
+.fwin-btn[data-fact="close"]:hover { color: var(--hp-low); background: rgba(224, 82, 77, .12); border-color: rgba(224, 82, 77, .3); }
+.fwin-btn:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
+@media (pointer: coarse) { .fwin-head { height: 44px; } .fwin-btn { width: 40px; height: 36px; } }
+
+.fwin-main { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; position: relative; z-index: 0; } /* own stacking context: widget z-indexes (sticky bars, map markers) stay below the resize handles */
+.fwin-main > .panel { flex: 1 1 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+.fwin-main > .panel > .panel-head { display: none; }
+
+/* resize handles: edges, plus corners on top; the bottom-right one carries a visible grip */
+.fwin-rz { position: absolute; z-index: 3; touch-action: none; }
+.fwin-rz[data-dir="n"] { top: 0; left: 14px; right: 10px; height: 6px; cursor: ns-resize; }
+.fwin-rz[data-dir="s"] { bottom: 0; left: 14px; right: 14px; height: 6px; cursor: ns-resize; }
+.fwin-rz[data-dir="e"] { right: 0; top: 10px; bottom: 14px; width: 6px; cursor: ew-resize; }
+.fwin-rz[data-dir="w"] { left: 0; top: 14px; bottom: 14px; width: 6px; cursor: ew-resize; }
+.fwin-rz[data-dir="ne"] { top: 0; right: 0; width: 10px; height: 10px; cursor: nesw-resize; } /* small: the close button sits right under it */
+.fwin-rz[data-dir="nw"] { top: 0; left: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+.fwin-rz[data-dir="se"] { bottom: 0; right: 0; width: 18px; height: 18px; cursor: nwse-resize; }
+.fwin-rz[data-dir="sw"] { bottom: 0; left: 0; width: 16px; height: 16px; cursor: nesw-resize; }
+.fwin-rz[data-dir="se"]::after { content: ""; position: absolute; right: 4px; bottom: 4px; width: 9px; height: 9px; opacity: .55;
+  background: linear-gradient(135deg, transparent 45%, var(--muted) 45%, var(--muted) 55%, transparent 55%, transparent 70%, var(--muted) 70%, var(--muted) 80%, transparent 80%); }
+@media (pointer: coarse) {
+  .fwin-rz[data-dir="n"] { height: 10px; left: 28px; right: 14px; }
+  .fwin-rz[data-dir="s"] { height: 14px; left: 28px; right: 28px; }
+  .fwin-rz[data-dir="e"] { width: 14px; top: 14px; bottom: 28px; }
+  .fwin-rz[data-dir="w"] { width: 14px; top: 28px; bottom: 28px; }
+  .fwin-rz[data-dir="ne"] { width: 14px; height: 10px; }
+  .fwin-rz[data-dir="nw"], .fwin-rz[data-dir="sw"] { width: 28px; height: 28px; }
+  .fwin-rz[data-dir="se"] { width: 32px; height: 32px; }
+}
+.fwin.max .fwin-rz { display: none; }
+body.fwin-gesture, body.fwin-gesture * { user-select: none; -webkit-user-select: none; }
+
+/* flashed when the launcher points at an already docked panel (map is single-instance) */
+.panel.flash { animation: panel-flash 1.3s ease-out; }
+@keyframes panel-flash { 0%, 55% { box-shadow: 0 0 0 2px var(--accent), 0 0 26px var(--accent-line); } 100% { box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 10px 28px rgba(0, 0, 0, .28); } }
+
+/* ---- tab mode / phones: a full-screen sheet over the tabs ------------------------------------------------------ */
+.is-tabs .fwin { inset: 0 !important; left: 0 !important; top: 0 !important; width: auto !important; height: auto !important; border: 0; border-radius: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  box-shadow: none; animation: fsheet-in .26s var(--ease); }
+.is-tabs .fwin::before { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.is-tabs .fwin:not(.front) { display: none; }
+.is-tabs .fwin-head { cursor: default; height: 48px; touch-action: auto; }
+.is-tabs .fwin-rz, .is-tabs .fwin [data-fact="dock"], .is-tabs .fwin [data-fact="max"] { display: none; }
+.is-tabs .fwin-btn { width: 44px; height: 40px; }
+.is-tabs .fwin-main { padding: 0 var(--gap) var(--gap); }
+@keyframes fsheet-in { from { transform: translateY(100%); } }
+@media (prefers-reduced-motion: reduce) { .fwin { animation: none !important; } .panel.flash { animation: none !important; } }

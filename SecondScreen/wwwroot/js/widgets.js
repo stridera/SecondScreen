@@ -9,9 +9,16 @@
 //   resize({width,height,size})  optional; the body size changed. `size` is "compact" (<340px), "regular" or "wide"
 //                       (>=640px). The same value is on `el.dataset.size`, so most widgets just use CSS:
 //                       .wbody[data-size="compact"] { ... }.
-//   unmount()           optional; page teardown only (widgets stay mounted while they are merely off screen).
+//   unmount()           optional; the instance is being thrown away (a floating window closed). Docked widgets stay mounted
+//                       while they are merely off screen, so this is also the page teardown hook. Clear timers / listeners.
 //
 //   ctx = { id, token(), withToken(path), setBadge(text) }   setBadge puts a small chip in the panel header.
+//
+// MULTIPLE INSTANCES: the same widget can be docked AND open in a floating window, so a tabs/ module does not export the
+// contract directly. It exports create(), a factory returning a fresh { mount, update, resize?, unmount? } with its own
+// closure state, and the registry below calls it once per Widget (def.make). Caches that are fine to share (market.js)
+// stay module-level. A def marked `single: true` cannot be instanced twice (map.js keeps module-level DOM state);
+// the dashboard then only ever shows one copy of it: docked, or floating while it is not docked.
 //
 // Registration below (id, title, icon, options). Older modules that only export `render(el, data)` (map, tracker) are
 // wrapped by legacy(), so they need no changes: they mount lazily on first render and are re-rendered on resize.
@@ -37,32 +44,36 @@ function legacy(mod, { rerenderOnResize = false } = {}) {
     mount(e) { el = e; },
     update(payload) { last = payload; mod.render(el, payload); },
     resize() { if (rerenderOnResize && last) mod.render(el, last); },
+    unmount() { mod.unmount?.(); },
   };
 }
 
 export const DEFS = [
-  { id: "party", title: "Party", icon: "users", mod: party,
+  { id: "party", title: "Party", icon: "users", make: () => party.create(),
     badge: (p) => { const s = p.snapshot; return s && s.loggedIn ? String((s.party || []).length || 1) : ""; } },
-  { id: "map", title: "Map", icon: "map", mod: legacy(map, { rerenderOnResize: true }), fill: true },
-  { id: "tracker", title: "Tracker", icon: "tracker", mod: legacy(tracker),
+  { id: "map", title: "Map", icon: "map", make: () => legacy(map, { rerenderOnResize: true }), fill: true, single: true },
+  { id: "tracker", title: "Tracker", icon: "tracker", make: () => legacy(tracker.create()),
     badge: (p) => { const t = p.trackers || []; return t.length ? `${t.filter((x) => x.complete).length}/${t.length}` : ""; } },
-  { id: "inventory", title: "Inventory", icon: "inventory", mod: inventory },
-  { id: "dailies", title: "Dailies", icon: "dailies", mod: dailies },
-  { id: "chat", title: "Chat", icon: "chat", mod: chat, fill: true },
-  { id: "character", title: "Character", icon: "character", mod: character },
-  { id: "plugins", title: "Plugins", icon: "plugins", mod: plugins,
+  { id: "inventory", title: "Inventory", icon: "inventory", make: () => inventory.create() },
+  { id: "dailies", title: "Dailies", icon: "dailies", make: () => dailies.create() },
+  { id: "chat", title: "Chat", icon: "chat", make: () => chat.create(), fill: true },
+  { id: "character", title: "Character", icon: "character", make: () => character.create() },
+  { id: "plugins", title: "Plugins", icon: "plugins", make: () => plugins.create(),
     badge: (p) => { const n = Object.keys(p.ipc || {}).length; return n ? String(n) : ""; } },
 ];
 
 export class Widget {
-  constructor(def) {
+  /** @param {object} def a DEFS entry. @param {{floating?: boolean}} [o] floating = hosted by a floating window, not a column / tab. */
+  constructor(def, { floating = false } = {}) {
     this.def = def;
-    this.mod = def.mod;
+    this.mod = def.make();
+    this.floating = floating;
     this.mounted = false;
     this.badgeText = "";
 
     this.panel = h("section", "panel");
     this.panel.dataset.widget = def.id;
+    if (floating) this.panel.classList.add("in-float");
     this.panel.innerHTML =
       `<header class="panel-head">
          <span class="ph-grip" aria-hidden="true">${icon("grip")}</span>
@@ -122,6 +133,7 @@ export class Widget {
   }
 
   unmount() {
+    this.mounted = false;
     try { this.mod.unmount?.(); } catch (e) { console.error(`[${this.def.id}] unmount`, e); }
     this.ro.disconnect();
   }
