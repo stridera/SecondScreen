@@ -1,0 +1,9 @@
+{
+  "Author": "stridera",
+  "Name": "SecondScreen",
+  "InternalName": "SecondScreen",
+  "Punchline": "View live FFXIV data on an iPad, phone, or second PC.",
+  "Description": "Hosts a small embedded web server so a browser on your LAN can show live party and player data. Other plugins can publish their own data to it through Dalamud IPC. Use /secondscreen to open the settings window and get the URL.",
+  "Tags": ["second screen", "web", "companion", "ipc", "party"],
+  "RepoUrl": "https://github.com/stridera/SecondScreen"
+}

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SecondScreen</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1117">
+  <meta name="color-scheme" content="dark">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="SecondScreen">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>SecondScreen</h1>
+    <nav id="tabs" class="tabs" role="tablist">
+      <button role="tab" data-tab="party" class="active">Party</button>
+      <button role="tab" data-tab="map">Map</button>
+      <button role="tab" data-tab="inventory">Inventory</button>
+      <button role="tab" data-tab="plugins">Plugins</button>
+    </nav>
+    <div id="status" class="status offline" title="Connection status"><span class="dot"></span><span id="status-text">Connecting</span></div>
+  </header>
+
+  <main id="view"></main>
+
+  <dialog id="token-dialog">
+    <form method="dialog" id="token-form">
+      <h2>Access token required</h2>
+      <p>Open the URL shown in the SecondScreen settings window in-game, or paste the token here.</p>
+      <input id="token-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="token">
+      <button type="submit">Connect</button>
+    </form>
+  </dialog>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
