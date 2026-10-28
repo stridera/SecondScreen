@@ -172,6 +172,8 @@ export class Dashboard {
       const on = b.dataset.tab === this.tab;
       b.classList.toggle("active", on);
       b.setAttribute("aria-selected", String(on));
+      // Narrow screens scroll the tab bar sideways; keep the active tab in view without scrolling the page.
+      if (on && this.nav.scrollWidth > this.nav.clientWidth) this.nav.scrollLeft += b.getBoundingClientRect().left - this.nav.getBoundingClientRect().left - (this.nav.clientWidth - b.offsetWidth) / 2;
     }
     const w = this.widgets.get(this.tab);
     w.panel.style.flex = "";

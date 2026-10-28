@@ -83,6 +83,12 @@ dialog .btn.primary { background: var(--accent); color: #06101f; border-color: v
   cursor: pointer; touch-action: manipulation; transition: background-color .15s, color .15s; }
 .tabs button .ico { width: 21px; height: 21px; }
 .tabs button.active { color: var(--accent); background: var(--accent-soft); }
+/* Phones: eight tabs do not fit side by side, so the bar scrolls sideways (the active tab is scrolled into view by dashboard.js). */
+@media (max-width: 699px) {
+  .tabs { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { flex: 1 0 auto; min-width: 66px; padding: 6px 8px; }
+}
 @media (min-width: 700px) {
   .tabs { order: 1; border-top: 0; background: none; backdrop-filter: none; -webkit-backdrop-filter: none; justify-content: flex-start; padding: 0 12px 8px; }
   .tabs button { flex: none; flex-direction: row; gap: 8px; min-height: 36px; padding: 0 14px; font-size: .86rem; border: 1px solid transparent; }
