@@ -59,9 +59,11 @@ dialog button { padding: 12px 18px; font-size: 1rem; border-radius: 10px; border
 .mk.me .mk-dot { background: var(--accent); z-index: 1; }
 .mk-arrow { position: absolute; left: -20px; top: -20px; width: 40px; height: 40px; overflow: visible; transform-origin: 50% 50%;
   filter: drop-shadow(0 1px 2px #0008); }
-.mk-label { position: absolute; left: 11px; top: -9px; display: none; white-space: nowrap; font-size: 12px; font-weight: 600;
-  color: #fff; background: #000a; padding: 1px 6px; border-radius: 6px; }
-.mapstage.labels .mk-label { display: block; }
+.mk-label { position: absolute; left: 11px; top: -9px; visibility: hidden; white-space: nowrap; font-size: 12px; font-weight: 600;
+  color: #fff; background: #000b; padding: 1px 6px; border-radius: 6px; text-shadow: 0 1px 2px #000, 0 0 3px #000; }
+/* Labels stay laid out (so map.js can measure them once) but are only painted when declutter() switched them on (.lbl). */
+.mk.lbl .mk-label { visibility: visible; }
+.mk.dh, .mk.dc { display: none; }
 
 /* Map tab: marker layers, layers panel, popover */
 .mapwrap { position: relative; }
@@ -81,7 +83,14 @@ dialog button { padding: 12px 18px; font-size: 1rem; border-radius: 10px; border
 .mk-ico.fb img { display: none; }
 .mk-ico ~ .mk-label { left: 17px; }
 .mk.txt .mk-label { left: 0; top: 0; transform: translate(-50%, -50%); background: none; padding: 0; font-size: 11px;
-  color: #3b3217; text-shadow: 0 0 3px #fff, 0 0 2px #fff, 0 0 2px #fff; }
+  color: #3b3217; text-shadow: 0 0 3px #fff, 0 0 2px #fff, 0 0 2px #fff, 0 0 5px #fffd;
+  -webkit-text-stroke: 2.5px rgba(255, 251, 236, .9); paint-order: stroke fill; }
+/* Compact panels (phone / small widget): slightly smaller label type. */
+.mapwrap.compact .mk-label { font-size: 10.5px; padding: 0 5px; }
+.mapwrap.compact .mk.txt .mk-label { font-size: 9.5px; padding: 0; -webkit-text-stroke-width: 2px; }
+.mk.cl .mk-badge { left: 12px; top: -22px; transform: none; min-width: 14px; box-sizing: border-box; text-align: center;
+  background: #12151df0; border: 1px solid #fff; padding: 0 4px; }
+
 .mk-circle { position: absolute; border-radius: 50%; box-sizing: border-box; pointer-events: none;
   background: rgba(255, 122, 89, .16); border: calc(2px * var(--inv)) solid rgba(255, 122, 89, .75); }
 .mk-badge { position: absolute; left: 0; top: 14px; transform: translateX(-50%); white-space: nowrap; font-size: 10px; font-weight: 700;

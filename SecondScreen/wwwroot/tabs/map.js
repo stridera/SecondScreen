@@ -17,12 +17,26 @@
 //           it, so the last one is cached by `seq`.
 // Markers are DOM nodes inside the scaled stage (reused between updates, never rebuilt per snapshot) and are
 // counter-scaled with --inv so they keep a constant screen size. Layer visibility is a class on the stage.
+//
+// Declutter (see declutter()): the map's on-screen size `eff` = TEX * scale (px) decides which detail tiers exist at all
+// (a small panel at the same zoom has a smaller eff, so it shows less). Label boxes are measured once in screen px and
+// placed greedily by priority on a bucket grid; icons of the same service / gathering category that overlap are merged
+// into one clustered icon with a count badge. All of it is translation invariant, so it only re-runs when the scale,
+// the viewport size, the marker set or the layer toggles change (rAF throttled, debounced while zooming), never per
+// 10 Hz snapshot and never while panning.
 
 const TEX = 2048;
 const MIN_ZOOM_FACTOR = 0.9;   // relative to the "fit whole map" scale
 const MAX_ZOOM = 3;            // CSS px per texture px
 const DEFAULT_ZOOM_FACTOR = 1.8;
-const LABEL_ZOOM_FACTOR = 1.6; // marker/party name labels appear once zoomed in this far past "fit"
+// Minimum on-screen size (px) of the whole 2048 map at which a detail tier appears.
+const DETAIL_MIN = { areaLabel: 560, aetheryteLabel: 900, gather: 700, transition: 800, service: 1000, smallLabel: 1300, exitLabel: 1600 };
+const CLUSTER_PX = 22;         // same-category icons closer than this (screen px) merge into one
+const LABEL_GAP = 3;           // px kept free around every label box
+const GRID_CELL = 64;          // bucket size of the collision grid
+const SETTLE_MS = 140;         // zoom must rest this long before collisions are recomputed
+const COMPACT_W = 480, COMPACT_H = 340; // viewports smaller than this get the compact label style
+const ICON_HALF = 13;          // half of the 26px icon box
 const PARTY_COLORS = ["#e0a93d", "#4cc46a", "#c06bff", "#ff7a59", "#37c8c8", "#ff6fb1", "#a3d65c"];
 const TAP_SLOP = 4;            // px of movement that turns a tap into a drag
 const HIT_RADIUS = 22;         // css px around a marker that counts as a tap on it
@@ -122,7 +136,10 @@ function mount(el) {
     follow: true,
     scale: 0.3, tx: 0, ty: 0,
     vw: 0, vh: 0,
-    labelsOn: false,
+    compact: false,
+    vScale: 0, dTimer: 0, dRaf: 0, dFont: "", // declutter bookkeeping (last applied scale, timers, label font key)
+    clPool: [],             // cluster nodes {el, badge, item}
+    clItems: [],            // active cluster items
     player: null,           // marker px position {x, y}
     els: new Map(),         // party/self marker key -> element
     pitems: new Map(),      // party/self key -> tappable item
@@ -134,7 +151,7 @@ function mount(el) {
     gesture: null,
     tap: null,
   };
-  S.img.addEventListener("load", () => { S.imgOk = true; S.msg.textContent = ""; S.msg.hidden = true; updateMarkersVisibility(); });
+  S.img.addEventListener("load", () => { S.imgOk = true; S.msg.textContent = ""; S.msg.hidden = true; updateMarkersVisibility(); scheduleDeclutter(); });
   S.img.addEventListener("error", () => { S.imgOk = false; showMsg("Map image unavailable."); });
   S.followBtn.addEventListener("click", () => setFollow(!S.follow, true));
   buildLayersPanel();
@@ -181,6 +198,7 @@ function buildLayersPanel() {
     try { localStorage.setItem(LAYER_STORE, JSON.stringify(S.layers)); } catch { /* storage full / disabled */ }
     applyLayerClasses();
     if (S.pop && !layerOn(S.pop.item.kind)) closePopover();
+    scheduleDeclutter();
   });
   S.layersBtn.addEventListener("click", () => toggleLayers());
 }
@@ -215,8 +233,7 @@ function applyView(smooth) {
   S.stage.style.transition = smooth ? "transform .15s linear" : "none";
   S.stage.style.transform = `translate(${S.tx}px, ${S.ty}px) scale(${S.scale})`;
   S.stage.style.setProperty("--inv", String(1 / S.scale));
-  S.labelsOn = S.scale >= fitScale() * LABEL_ZOOM_FACTOR;
-  S.stage.classList.toggle("labels", S.labelsOn);
+  if (S.scale !== S.vScale) { S.vScale = S.scale; scheduleDeclutter(SETTLE_MS); } // zoom (not pan) changed what fits
 }
 
 function centerOnPlayer() {
@@ -266,6 +283,8 @@ function layout() {
     const first = S.vw === 0;
     const oldFit = first ? 0 : fitScale();
     S.vw = w; S.vh = vh;
+    S.root.classList.toggle("compact", (S.compact = w < COMPACT_W || vh < COMPACT_H));
+    scheduleDeclutter();
     if (first) resetView();
     else {
       S.scale *= fitScale() / oldFit;
@@ -416,6 +435,9 @@ function clearMarkers() {
   S.pitems.clear();
   for (const it of S.stItems) it.el.remove();
   S.stItems = [];
+  for (const n of S.clPool) n.el.remove();
+  S.clPool = [];
+  S.clItems = [];
   clearLive();
   closePopover();
   S.player = null;
@@ -424,6 +446,7 @@ function clearMarkers() {
 function clearLive() {
   for (const it of S.lvItems.values()) it.el.remove();
   S.lvItems.clear();
+  if (S.meta) scheduleDeclutter();
 }
 
 function updateMarkersVisibility() {
@@ -432,7 +455,14 @@ function updateMarkersVisibility() {
 
 // ---- static markers ---------------------------------------------------------------------------
 
+const normName = (t) => String(t || "").trim().toLowerCase();
+
+// Label priority (lower wins a collision): 0 region / zone name, 1 text-only area name (large), 2 landmark pin
+// (small), 3 aetheryte name, 4 zone exit name. The server sends no area size, so "large vs small" is text-only
+// names vs icon pins.
 function buildStatic(set) {
+  const meta = S.meta || {};
+  const big = new Set([meta.zone, meta.region, meta.name, meta.subArea].filter(Boolean).map(normName));
   const frag = document.createDocumentFragment();
   for (const m of set.markers || []) {
     if (!STATIC_LAYERS.has(m.category)) continue;
@@ -440,13 +470,214 @@ function buildStatic(set) {
     const el = iconNode(`st${textOnly ? " txt" : ""}`, m.category, m.iconId, m.label);
     placeMarker(el, m.x, m.y);
     frag.appendChild(el);
+    const pri = m.category === "label" ? (big.has(normName(m.label)) ? 0 : textOnly ? 1 : 2)
+      : m.category === "aetheryte" ? 3 : m.category === "transition" ? 4 : 9;
     S.stItems.push({
-      key: `s:${S.stItems.length}`, kind: m.category, x: m.x, y: m.y, el, textOnly,
+      key: `s:${S.stItems.length}`, kind: m.category, x: m.x, y: m.y, el, textOnly, iconId: m.iconId, pri,
+      lab: el.querySelector(".mk-label"),
       title: m.label || KIND_NAMES[m.category],
       lines: () => (m.label ? [KIND_NAMES[m.category]] : []),
     });
   }
   S.markers.insertBefore(frag, S.markers.firstChild); // below live / party / self markers
+  scheduleDeclutter();
+}
+
+// ---- declutter ----------------------------------------------------------------------------------
+
+// rAF throttled; `settle` > 0 waits for the zoom to rest first (a newer immediate request overrides it).
+function scheduleDeclutter(settle = 0) {
+  const s = S;
+  if (!s) return;
+  const kick = () => {
+    s.dTimer = 0;
+    if (!s.dRaf) s.dRaf = requestAnimationFrame(() => { s.dRaf = 0; if (S === s) declutter(); });
+  };
+  if (!settle) { clearTimeout(s.dTimer); kick(); }
+  else if (!s.dRaf) { clearTimeout(s.dTimer); s.dTimer = setTimeout(kick, settle); }
+}
+
+const CLUSTER_NAMES = { service: "Services", gather: "Gathering nodes" };
+
+function clusterNode(i) {
+  let n = S.clPool[i];
+  if (n) return n;
+  const el = iconNode("lv cl", "gather", 0, "", { dot: true });
+  const badge = document.createElement("span");
+  badge.className = "mk-badge cl-n";
+  el.querySelector(".mk-s").appendChild(badge);
+  const item = { key: `c:${i}`, isCluster: true, el, x: 0, y: 0, members: [], kind: "gather", title: "", lines: () => [] };
+  n = { el, badge, item, kind: "", iconId: -1 };
+  S.markers.appendChild(el);
+  S.clPool[i] = n;
+  return n;
+}
+
+function setClass(el, cls, on) {
+  if (el.classList.contains(cls) !== on) el.classList.toggle(cls, on);
+}
+
+// Recompute which detail tiers, clusters and labels are shown at the current scale. Reads (label measurement)
+// happen once, batched, before any write; everything else is arithmetic on cached numbers.
+function declutter() {
+  if (!S || !S.meta || !S.imgOk || !S.vw) return;
+  const sc = S.scale;
+  const eff = TEX * sc;                       // on-screen px of the whole 2048 map
+  const items = [...S.stItems, ...S.lvItems.values()];
+  const fontKey = S.compact ? "c" : "n";
+  if (S.dFont !== fontKey) { S.dFont = fontKey; for (const it of items) it.lw = undefined; }
+
+  // 1. detail tiers (by on-screen map size, not raw zoom)
+  const D = DETAIL_MIN;
+  for (const it of items) {
+    let ok = true;
+    switch (it.kind) {
+      case "label": ok = it.pri === 0 || (it.pri === 1 ? eff >= D.areaLabel : eff >= D.smallLabel); break;
+      case "transition": ok = eff >= D.transition; break;
+      case "service": ok = eff >= D.service; break;
+      case "gather": ok = eff >= D.gather; break;
+      default: break; // aetheryte, quest, fate, flag: always
+    }
+    it.nh = !ok;
+    it.skip = !ok || !layerOn(it.kind);
+    it.nn = false;
+  }
+
+  // 2. clusters of overlapping same-category icons (services, gathering nodes)
+  const clusters = [];
+  for (const kind of ["service", "gather"]) {
+    const grid = new Map();
+    const mine = [];
+    for (const it of items) {
+      if (it.kind !== kind || it.skip) continue;
+      const sx = it.x * sc, sy = it.y * sc;
+      const cx = Math.floor(sx / CLUSTER_PX), cy = Math.floor(sy / CLUSTER_PX);
+      let hit = null;
+      for (let gx = cx - 1; gx <= cx + 1 && !hit; gx++) {
+        for (let gy = cy - 1; gy <= cy + 1 && !hit; gy++) {
+          for (const c of grid.get(gx * 100003 + gy) || []) {
+            if (Math.hypot(c.sx - sx, c.sy - sy) <= CLUSTER_PX) { hit = c; break; }
+          }
+        }
+      }
+      if (hit) {
+        hit.members.push(it);
+        hit.sx += (sx - hit.sx) / hit.members.length;
+        hit.sy += (sy - hit.sy) / hit.members.length;
+      } else {
+        hit = { kind, sx, sy, members: [it] };
+        mine.push(hit);
+        const k = cx * 100003 + cy;
+        if (!grid.has(k)) grid.set(k, []);
+        grid.get(k).push(hit);
+      }
+    }
+    for (const c of mine) {
+      if (c.members.length < 2) continue;
+      for (const m of c.members) m.nn = true;
+      clusters.push(c);
+    }
+  }
+
+  // 3. label candidates: [priority, item]; the nearest quest / FATE ("frontmost") keeps its label at top priority
+  const cands = [];
+  for (const it of items) {
+    if (it.skip || it.nn || !it.lab || !it.lab.textContent) continue;
+    if (it.kind === "label") cands.push([it.pri, it]);
+    else if (it.kind === "aetheryte" && eff >= D.aetheryteLabel) cands.push([3, it]);
+    else if (it.kind === "transition" && eff >= D.exitLabel) cands.push([4, it]);
+  }
+  if (S.player) {
+    let front = null, best = Infinity;
+    for (const it of items) {
+      if ((it.kind !== "quest" && it.kind !== "fate") || it.skip || !it.lab || !it.lab.textContent) continue;
+      const d = (it.x - S.player.x) ** 2 + (it.y - S.player.y) ** 2;
+      if (d < best) { best = d; front = it; }
+    }
+    if (front) cands.push([-1, front]);
+  }
+
+  // measure label boxes once per font size (screen px; labels are counter-scaled so this never changes with zoom)
+  const need = cands.filter(([, it]) => it.lw === undefined).map(([, it]) => it);
+  for (const it of need) {
+    if (it.dh) { it.el.classList.remove("dh"); it.dh = false; }
+    if (it.dc) { it.el.classList.remove("dc"); it.dc = false; }
+  }
+  for (const it of need) { it.lw = it.lab.offsetWidth || undefined; it.lh = it.lab.offsetHeight; }
+
+  // 4. greedy placement on a bucket grid
+  const grid = new Map();
+  const cellKeys = (r, fn) => {
+    for (let gx = Math.floor(r[0] / GRID_CELL); gx <= Math.floor(r[2] / GRID_CELL); gx++) {
+      for (let gy = Math.floor(r[1] / GRID_CELL); gy <= Math.floor(r[3] / GRID_CELL); gy++) if (fn(gx * 100003 + gy)) return true;
+    }
+    return false;
+  };
+  const blocked = (r, withIcons) => cellKeys(r, (k) => {
+    for (const o of grid.get(k) || []) {
+      if (!withIcons && o.ico) continue;
+      if (r[0] < o[2] + LABEL_GAP && o[0] < r[2] + LABEL_GAP && r[1] < o[3] + LABEL_GAP && o[1] < r[3] + LABEL_GAP) return true;
+    }
+    return false;
+  });
+  const put = (r) => cellKeys(r, (k) => { (grid.get(k) || grid.set(k, []).get(k)).push(r); return false; });
+  const iconBoxes = () => {
+    const add = (x, y, below = 0) => { const r = [x - ICON_HALF, y - ICON_HALF, x + ICON_HALF, y + ICON_HALF + below]; r.ico = true; put(r); };
+    for (const it of items) if (!it.skip && !it.nn && !it.textOnly) add(it.x * sc, it.y * sc, it.kind === "fate" ? 16 : 0); // FATE: progress badge below
+    for (const c of clusters) add(c.sx, c.sy);
+  };
+  const on = new Set();
+  cands.sort((a, b) => a[0] - b[0]);
+  iconBoxes();
+  for (const [pri, it] of cands) {
+    if (!it.lw) continue;
+    const sx = it.x * sc, sy = it.y * sc;
+    const r = it.textOnly
+      ? [sx - it.lw / 2, sy - it.lh / 2, sx + it.lw / 2, sy + it.lh / 2]
+      : [sx + 17, sy - 9, sx + 17 + it.lw, sy - 9 + it.lh];
+    // Zone names and the frontmost marker's label may sit over icons if there is nowhere else; everything else avoids them.
+    if (blocked(r, true) && (pri > 0 || blocked(r, false))) continue;
+    put(r);
+    on.add(it);
+  }
+
+  // 5. apply (writes only, and only where something changed)
+  S.clItems = [];
+  clusters.forEach((c, i) => {
+    const n = clusterNode(i);
+    const it = n.item;
+    const first = c.members[0];
+    if (n.kind !== c.kind) { n.kind = c.kind; n.el.className = `mk lv cl k-${c.kind}`; }
+    if (n.iconId !== first.iconId) {
+      n.iconId = first.iconId;
+      const ico = n.el.querySelector(".mk-ico");
+      const img = ico.querySelector("img") || ico.appendChild(document.createElement("img"));
+      img.alt = ""; img.draggable = false;
+      ico.classList.remove("fb");
+      if (first.iconId) img.src = iconUrl(first.iconId); else ico.classList.add("fb");
+    }
+    it.kind = c.kind;
+    it.members = c.members;
+    it.x = c.sx / sc; it.y = c.sy / sc;
+    it.title = `${CLUSTER_NAMES[c.kind]} (${c.members.length})`;
+    const names = c.members.map((m) => m.title).filter(Boolean);
+    it.lines = () => [...names.slice(0, 8), ...(names.length > 8 ? [`+${names.length - 8} more`] : [])];
+    placeMarker(n.el, it.x, it.y);
+    const txt = String(c.members.length);
+    if (n.badge.textContent !== txt) n.badge.textContent = txt;
+    setClass(n.el, "dh", false);
+    S.clItems.push(it);
+  });
+  for (let i = clusters.length; i < S.clPool.length; i++) { S.clPool[i].item.members = []; setClass(S.clPool[i].el, "dh", true); }
+
+  for (const it of items) {
+    if (it.dh !== it.nh) { it.dh = it.nh; setClass(it.el, "dh", it.nh); }
+    if (!!it.dc !== it.nn) { it.dc = it.nn; setClass(it.el, "dc", it.nn); }
+    it.nc = it.nn;
+    const lbl = on.has(it);
+    if (!!it.lblOn !== lbl) { it.lblOn = lbl; setClass(it.el, "lbl", lbl); }
+  }
+  if (S.pop && (S.pop.item.nc || S.pop.item.dh || S.pop.item.isCluster)) closePopover();
 }
 
 // ---- live markers -----------------------------------------------------------------------------
@@ -462,8 +693,10 @@ function liveItem(key, kind, build) {
     it = build();
     it.key = key;
     it.kind = kind;
+    it.lab = it.el.querySelector(".mk-label");
     S.markers.appendChild(it.el);
     S.lvItems.set(key, it);
+    S.setChanged = true;
   }
   return it;
 }
@@ -519,6 +752,7 @@ function applyLive() {
     seen.add(key);
     const it = liveItem(key, "gather", () => ({ el: iconNode("lv", "gather", g.iconId, g.name, { dot: true }) }));
     place(it, g.x, g.z);
+    it.iconId = g.iconId;
     it.title = g.name || KIND_NAMES.gather;
     it.lines = () => [g.level > 0 ? `${KIND_NAMES.gather}  ·  Lv ${g.level}` : KIND_NAMES.gather];
   }
@@ -545,7 +779,9 @@ function applyLive() {
     if (S.pop && S.pop.item === it) closePopover();
     it.el.remove();
     S.lvItems.delete(key);
+    S.setChanged = true;
   }
+  if (S.setChanged) { S.setChanged = false; scheduleDeclutter(); }
   refreshPopover();
 }
 
@@ -554,6 +790,7 @@ function applyLive() {
 function* allItems() {
   yield* S.stItems;
   yield* S.lvItems.values();
+  yield* S.clItems;
   yield* S.pitems.values();
 }
 
@@ -562,14 +799,38 @@ function handleTap(sx, sy) {
   let best = null;
   let bestD = HIT_RADIUS * HIT_RADIUS;
   for (const it of allItems()) {
-    if (!layerOn(it.kind) || (it.textOnly && !S.labelsOn)) continue;
+    if (!layerOn(it.kind) || it.dh || it.nc || (it.textOnly && !it.lblOn)) continue;
     const dx = S.tx + it.x * S.scale - sx;
     const dy = S.ty + it.y * S.scale - sy;
     const d = dx * dx + dy * dy;
     if (d <= bestD) { bestD = d; best = it; } // later items (live, party, self) win ties
   }
   if (!best || (S.pop && S.pop.item === best)) closePopover();
+  else if (best.isCluster) expandCluster(best);
   else openPopover(best);
+}
+
+// Tapping a cluster zooms in on it until its closest pair would split; if the zoom is exhausted (or members sit
+// on top of each other) the members are listed in the popover instead.
+function expandCluster(cl) {
+  const sc = S.scale;
+  let dmin = Infinity;
+  const ms = cl.members;
+  for (let i = 0; i < ms.length; i++) {
+    for (let j = i + 1; j < ms.length; j++) {
+      const d = Math.hypot(ms[i].x - ms[j].x, ms[i].y - ms[j].y) * sc;
+      if (d > 0.5 && d < dmin) dmin = d;
+    }
+  }
+  const factor = Number.isFinite(dmin) ? Math.min(6, Math.max(1.8, (CLUSTER_PX * 1.3) / dmin)) : 1;
+  const target = Math.min(MAX_ZOOM, sc * factor);
+  if (target < sc * 1.08) { openPopover(cl); return; }
+  closePopover();
+  setFollow(false);
+  S.scale = target;
+  S.tx = S.vw / 2 - cl.x * target;
+  S.ty = S.vh / 2 - cl.y * target;
+  applyView(true);
 }
 
 function openPopover(item) {
