@@ -16,6 +16,9 @@ public sealed class Configuration : IPluginConfiguration
     public string AccessToken { get; set; } = string.Empty;
     public bool AutoStart { get; set; } = true;
 
+    /// <summary>IP the user last picked for the QR code; null when no choice is saved.</summary>
+    public string? QrAddress { get; set; }
+
     /// <summary>Tracker tab definitions (v3). Only access through TrackerService, which locks around it.</summary>
     public List<TrackerDef> Trackers { get; set; } = new();
 

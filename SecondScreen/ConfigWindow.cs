@@ -125,21 +125,36 @@ internal sealed class ConfigWindow : Window
         return b[0] == 10 || (b[0] == 192 && b[1] == 168) || (b[0] == 172 && b[1] >= 16 && b[1] <= 31);
     }
 
+    private static bool IsTailscale(string address)
+    {
+        if (!IPAddress.TryParse(address, out var ip) || ip.AddressFamily != AddressFamily.InterNetwork) return false;
+        var b = ip.GetAddressBytes();
+        return b[0] == 100 && b[1] >= 64 && b[1] <= 127;
+    }
+
     private void DrawQr(List<string> addrs)
     {
         if (!ImGui.CollapsingHeader("QR code", ImGuiTreeNodeFlags.DefaultOpen)) return;
 
-        // Keep the selection while it is still valid; otherwise prefer a private LAN address.
+        // Keep the selection while it is still valid; otherwise use the saved choice, then Tailscale, then a private LAN address.
         if (qrAddress == null || !addrs.Contains(qrAddress))
-            qrAddress = addrs.Find(IsPrivateLan) ?? addrs[0];
+            qrAddress = config.QrAddress != null && addrs.Contains(config.QrAddress)
+                ? config.QrAddress
+                : addrs.Find(IsTailscale) ?? addrs.Find(IsPrivateLan) ?? addrs[0];
 
         if (addrs.Count > 1)
         {
             for (var i = 0; i < addrs.Count; i++)
             {
                 if (i > 0) ImGui.SameLine();
-                if (ImGui.RadioButton($"{addrs[i]}##qr{i}", addrs[i] == qrAddress)) qrAddress = addrs[i];
+                if (ImGui.RadioButton($"{addrs[i]}##qr{i}", addrs[i] == qrAddress))
+                {
+                    qrAddress = addrs[i];
+                    config.QrAddress = qrAddress;
+                    Save();
+                }
             }
+            ImGui.TextDisabled("Tailscale (100.x) works from anywhere on your tailnet; LAN (192.168.x) only on the same Wi-Fi.");
         }
 
         var url = BuildUrl(qrAddress);
