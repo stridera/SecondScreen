@@ -56,6 +56,7 @@ internal sealed class StateSocketModule : WebSocketModule
     public StateSocketModule(string path, Func<string> buildPayload) : base(path, true)
     {
         this.buildPayload = buildPayload;
+        Encoding = Json.Utf8NoBom; // no BOM in WebSocket text frames
     }
 
     public int ClientCount => ActiveContexts.Count;
@@ -75,6 +76,7 @@ internal sealed class WebHost : IDisposable
     private readonly Configuration config;
     private readonly Collector collector;
     private readonly IpcStore ipc;
+    private readonly MapService maps;
     private readonly IPluginLog log;
     private readonly object gate = new();
 
@@ -84,11 +86,12 @@ internal sealed class WebHost : IDisposable
     private Task? runTask;
     private Task? pushTask;
 
-    public WebHost(Configuration config, Collector collector, IpcStore ipc, IPluginLog log)
+    public WebHost(Configuration config, Collector collector, IpcStore ipc, MapService maps, IPluginLog log)
     {
         this.config = config;
         this.collector = collector;
         this.ipc = ipc;
+        this.maps = maps;
         this.log = log;
     }
 
@@ -118,6 +121,7 @@ internal sealed class WebHost : IDisposable
                         ctx => SendJson(ctx, Json.Serialize(collector.Current))))
                     .WithModule(new ActionModule("/api/ipc", HttpVerbs.Get,
                         ctx => SendJson(ctx, Json.Serialize(ipc.ToDictionary()))))
+                    .WithModule(new ActionModule("/api/map", HttpVerbs.Get, HandleMapAsync))
                     .WithModule(ws)
                     .WithEmbeddedResources("/", Assembly.GetExecutingAssembly(), "SecondScreen.wwwroot");
 
@@ -198,7 +202,41 @@ internal sealed class WebHost : IDisposable
     private static Task SendJson(IHttpContext ctx, string json)
     {
         ctx.Response.Headers["Cache-Control"] = "no-store";
-        return ctx.SendStringAsync(json, "application/json", Encoding.UTF8);
+        return ctx.SendStringAsync(json, "application/json", Json.Utf8NoBom);
+    }
+
+    /// <summary>GET /api/map/{mapId} (metadata JSON) and GET /api/map/{mapId}.png (cached map image).</summary>
+    private async Task HandleMapAsync(IHttpContext ctx)
+    {
+        var rest = ctx.Request.Url.AbsolutePath.Substring("/api/map".Length).Trim('/');
+        var wantPng = rest.EndsWith(".png", StringComparison.OrdinalIgnoreCase);
+        if (wantPng) rest = rest.Substring(0, rest.Length - 4);
+        if (!uint.TryParse(rest, out var mapId)) throw HttpException.BadRequest("Invalid map id");
+
+        if (!wantPng)
+        {
+            var info = maps.GetInfo(mapId) ?? throw HttpException.NotFound();
+            await SendJson(ctx, Json.Serialize(info)).ConfigureAwait(false);
+            return;
+        }
+
+        byte[]? png;
+        try
+        {
+            png = await Task.Run(() => maps.GetPng(mapId)).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "SecondScreen failed to render map {MapId}", mapId);
+            throw HttpException.InternalServerError();
+        }
+        if (png == null) throw HttpException.NotFound();
+
+        ctx.Response.ContentType = "image/png";
+        ctx.Response.ContentLength64 = png.Length;
+        ctx.Response.Headers["Cache-Control"] = "private, max-age=86400";
+        using var stream = ctx.OpenResponseStream(false, false);
+        await stream.WriteAsync(png, 0, png.Length).ConfigureAwait(false);
     }
 
     private void StopInternal()

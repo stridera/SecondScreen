@@ -17,6 +17,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Configuration config;
     private readonly Collector collector;
     private readonly IpcStore ipcStore = new();
+    private readonly MapService mapService;
     private readonly WebHost webHost;
     private readonly IpcGates ipcGates;
     private readonly WindowSystem windowSystem = new("SecondScreen");
@@ -26,6 +27,7 @@ public sealed class Plugin : IDalamudPlugin
         IDalamudPluginInterface pluginInterface,
         ICommandManager commandManager,
         IFramework framework,
+        IDataManager dataManager,
         IClientState clientState,
         IObjectTable objectTable,
         IPartyList partyList,
@@ -39,7 +41,8 @@ public sealed class Plugin : IDalamudPlugin
         if (config.Migrate() | config.EnsureToken()) pluginInterface.SavePluginConfig(config);
 
         collector = new Collector(framework, clientState, objectTable, partyList, log);
-        webHost = new WebHost(config, collector, ipcStore, log);
+        mapService = new MapService(dataManager, log);
+        webHost = new WebHost(config, collector, ipcStore, mapService, log);
         ipcGates = new IpcGates(pluginInterface, ipcStore, () => webHost.IsRunning);
 
         configWindow = new ConfigWindow(config, webHost, pluginInterface);
