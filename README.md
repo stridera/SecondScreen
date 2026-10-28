@@ -4,7 +4,7 @@ A Dalamud plugin for FFXIV that hosts a small embedded web server (EmbedIO) so a
 (iPad, Android, a second PC) can show live game data. Other plugins can publish their own data to it
 through Dalamud IPC.
 
-Tabs: **Party** (live HP/MP cards), **Map** (zone map with live markers), **Tracker** (item/currency and achievement trackers), **Inventory** (bags, armoury, equipped, crystals, currency, saddlebag and cached retainers with search and ventures), **Plugins** (IPC-published data).
+Tabs: **Party** (live HP/MP cards), **Map** (zone map with live markers), **Tracker** (item/currency and achievement trackers), **Inventory** (bags, armoury, equipped, crystals, currency, saddlebag and cached retainers with search and ventures), **Dailies** (daily/weekly checklist read from the game client: duty roulettes, tribal quests, Wondrous Tails, Custom Deliveries, weekly tomestones, reset and Jumbo Cactpot countdowns), **Plugins** (IPC-published data).
 
 ## Build
 
@@ -57,6 +57,7 @@ network. `/api/*` and `/ws` require the token (`?token=` or `Authorization: Bear
 - `GET /api/search?kind=item|achievement&q=...` - top 25 `{id, name, iconId, subtitle}` (case-insensitive substring)
 - `GET /api/icon/{iconId}.png` - game icon rendered to PNG
 - `GET /api/inventory` - inventory model (containers by group, gil, free slots, cached retainers with ventures, static item info); the WebSocket payload carries `inventoryVersion` and the client refetches only when it changes
+- `GET /api/dailies` - Dailies checklist model; `PUT /api/dailies/settings` (`{items:{id:bool}, jumboRegion}`) shows/hides items and picks the Jumbo Cactpot region; the WebSocket payload carries `dailiesVersion`
 
 ## Tracker tab
 

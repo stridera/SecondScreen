@@ -21,6 +21,7 @@ import * as map from "../tabs/map.js";
 import * as tracker from "../tabs/tracker.js";
 import * as inventory from "../tabs/inventory.js";
 import * as plugins from "../tabs/plugins.js";
+import * as dailies from "../tabs/dailies.js";
 import { icon } from "./icons.js";
 import { h } from "./ui.js";
 
@@ -44,6 +45,7 @@ export const DEFS = [
   { id: "tracker", title: "Tracker", icon: "tracker", mod: legacy(tracker),
     badge: (p) => { const t = p.trackers || []; return t.length ? `${t.filter((x) => x.complete).length}/${t.length}` : ""; } },
   { id: "inventory", title: "Inventory", icon: "inventory", mod: inventory },
+  { id: "dailies", title: "Dailies", icon: "dailies", mod: dailies },
   { id: "plugins", title: "Plugins", icon: "plugins", mod: plugins,
     badge: (p) => { const n = Object.keys(p.ipc || {}).length; return n ? String(n) : ""; } },
 ];

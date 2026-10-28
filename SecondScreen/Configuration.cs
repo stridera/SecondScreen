@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Security.Cryptography;
 using Dalamud.Configuration;
 
@@ -22,6 +23,9 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Tracker tab definitions (v3). Only access through TrackerService, which locks around it.</summary>
     public List<TrackerDef> Trackers { get; set; } = new();
 
+    /// <summary>Dailies &amp; Weeklies widget settings. Absent in older files, so the initializer supplies the default; never left null.</summary>
+    public DailiesSettings Dailies { get; set; } = new();
+
     /// <summary>Applies config migrations. Returns true if the config changed.</summary>
     public bool Migrate()
     {
@@ -41,6 +45,9 @@ public sealed class Configuration : IPluginConfiguration
             changed = true;
         }
         if (Trackers == null) { Trackers = new(); changed = true; }
+        if (Dailies == null) { Dailies = new(); changed = true; }
+        if (Dailies.Items == null) { Dailies.Items = new(); changed = true; }
+        if (!DailiesService.JumboRegions.Contains(Dailies.JumboRegion)) { Dailies.JumboRegion = "na"; changed = true; }
         // Drop corrupt/unusable rows rather than letting them poison the tab.
         if (Trackers.RemoveAll(t => t == null || string.IsNullOrEmpty(t.Id) || string.IsNullOrEmpty(t.Kind)) > 0)
             changed = true;
