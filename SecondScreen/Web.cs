@@ -106,6 +106,9 @@ internal sealed class WebHost : IDisposable
         this.log = log;
     }
 
+    /// <summary>Dailies &amp; Weeklies checklist (set by the plugin right after construction).</summary>
+    internal DailiesService? Dailies { get; init; }
+
     public bool IsRunning => server?.State == WebServerState.Listening;
     public string? LastError { get; private set; }
     public int ClientCount => socket?.ClientCount ?? 0;
@@ -137,6 +140,7 @@ internal sealed class WebHost : IDisposable
                     .WithModule(new ActionModule("/api/search", HttpVerbs.Get, HandleSearchAsync))
                     .WithModule(new ActionModule("/api/icon", HttpVerbs.Get, HandleIconAsync))
                     .WithModule(new ActionModule("/api/inventory", HttpVerbs.Get, HandleInventoryAsync))
+                    .WithModule(new ActionModule("/api/dailies", HttpVerbs.Any, HandleDailiesAsync))
                     .WithModule(ws)
                     .WithEmbeddedResources("/", Assembly.GetExecutingAssembly(), "SecondScreen.wwwroot");
 
@@ -228,6 +232,7 @@ internal sealed class WebHost : IDisposable
             ipc = ipc.ToDictionary(),
             trackers = trackers.Progress,
             inventoryVersion = inventory.Version,
+            dailiesVersion = Dailies?.Version ?? 0,
             live = collector.Live,
         })
         : Json.Serialize(new
@@ -236,6 +241,7 @@ internal sealed class WebHost : IDisposable
             ipc = ipc.ToDictionary(),
             trackers = trackers.Progress,
             inventoryVersion = inventory.Version,
+            dailiesVersion = Dailies?.Version ?? 0,
         });
 
     private static Task SendJson(IHttpContext ctx, string json)
@@ -460,6 +466,46 @@ internal sealed class WebHost : IDisposable
             throw HttpException.InternalServerError();
         }
         await SendJson(ctx, body).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// GET /api/dailies: the checklist model ("version" matches dailiesVersion in the WebSocket payload).
+    /// PUT /api/dailies/settings { items?: { id: bool }, jumboRegion?: "na"|"eu"|"jp"|"oce" }: partial update, saved to the plugin config.
+    /// </summary>
+    private async Task HandleDailiesAsync(IHttpContext ctx)
+    {
+        var svc = Dailies ?? throw HttpException.NotFound();
+        var rest = ctx.Request.Url.AbsolutePath.Substring("/api/dailies".Length).Trim('/');
+        var verb = ctx.Request.HttpVerb;
+
+        if (rest.Length == 0)
+        {
+            if (verb != HttpVerbs.Get) throw HttpException.MethodNotAllowed();
+            await SendJson(ctx, svc.GetJson()).ConfigureAwait(false);
+            return;
+        }
+        if (rest.Equals("settings", StringComparison.OrdinalIgnoreCase))
+        {
+            if (verb != HttpVerbs.Put && verb != HttpVerbs.Post) throw HttpException.MethodNotAllowed();
+            using var body = await ReadBodyAsync(ctx).ConfigureAwait(false);
+            var root = body.RootElement;
+            Dictionary<string, bool>? items = null;
+            if (root.TryGetProperty("items", out var itemsEl))
+            {
+                if (itemsEl.ValueKind != JsonValueKind.Object) throw HttpException.BadRequest("items must be an object");
+                items = new Dictionary<string, bool>();
+                foreach (var p in itemsEl.EnumerateObject())
+                {
+                    if (p.Value.ValueKind != JsonValueKind.True && p.Value.ValueKind != JsonValueKind.False) throw HttpException.BadRequest("item values must be booleans");
+                    items[p.Name] = p.Value.GetBoolean();
+                }
+            }
+            try { svc.UpdateSettings(items, GetString(root, "jumboRegion")); }
+            catch (ArgumentException ex) { throw HttpException.BadRequest(ex.Message); }
+            await SendJson(ctx, "{\"ok\":true}").ConfigureAwait(false);
+            return;
+        }
+        throw HttpException.NotFound();
     }
 
     private void StopInternal()

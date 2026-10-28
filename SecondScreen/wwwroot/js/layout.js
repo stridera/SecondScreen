@@ -6,7 +6,7 @@
 // A widget id appears at most once per layout. The layout is stored per orientation slot (landscape / portrait)
 // in localStorage; until the user picks or edits something, nothing is stored and the preset is auto-picked.
 
-export const WIDGET_IDS = ["party", "map", "tracker", "inventory", "plugins"];
+export const WIDGET_IDS = ["party", "map", "tracker", "inventory", "plugins", "dailies"];
 export const BREAKPOINT = 700;     // viewport width below which the tab UI is always used
 export const MIN_COL_PX = 220;
 export const MIN_PANEL_PX = 110;
