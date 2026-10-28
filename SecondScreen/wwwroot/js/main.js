@@ -1,19 +1,10 @@
 import { connect } from "./socket.js";
-import * as party from "../tabs/party.js";
-import * as map from "../tabs/map.js";
-import * as inventory from "../tabs/inventory.js";
-import * as plugins from "../tabs/plugins.js";
-import * as tracker from "../tabs/tracker.js";
+import { createWidgets } from "./widgets.js";
+import { Dashboard } from "./dashboard.js";
+import { initShell } from "./shell.js";
 
-const TABS = { party, map, tracker, inventory, plugins };
-const view = document.getElementById("view");
 const statusEl = document.getElementById("status");
 const statusText = document.getElementById("status-text");
-
-let current = localStorage.getItem("ss.tab") || "party";
-if (!TABS[current]) current = "party";
-let data = { snapshot: null, ipc: {}, trackers: [] };
-let dirty = true;
 
 // Token: URL query wins and is persisted; strip it from the address bar afterwards.
 const url = new URL(location.href);
@@ -30,28 +21,20 @@ function setStatus(s) {
   statusText.textContent = s === "online" ? "Live" : s === "connecting" ? "Connecting" : "Offline";
 }
 
-function selectTab(name) {
-  current = name;
-  localStorage.setItem("ss.tab", name);
-  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
-  view.innerHTML = "";
-  delete view.dataset.done;
-  dirty = true;
-}
-
-document.getElementById("tabs").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-tab]");
-  if (b) selectTab(b.dataset.tab);
+const dash = new Dashboard({
+  stage: document.getElementById("stage"),
+  nav: document.getElementById("tabs"),
+  widgets: createWidgets(),
 });
+initShell(dash);
+window.__dash = dash; // handy for debugging in the console
 
-// Render at most once per animation frame, only when data changed.
+// Push data to the visible widgets at most once per animation frame.
 function frame() {
-  if (dirty) {
-    dirty = false;
-    try { TABS[current].render(view, data); } catch (e) { console.error(e); }
-  }
+  try { dash.tick(); } catch (e) { console.error(e); }
   requestAnimationFrame(frame);
 }
+requestAnimationFrame(frame);
 
 if (!token) {
   const dlg = document.getElementById("token-dialog");
@@ -64,11 +47,6 @@ if (!token) {
 } else {
   connect(token, {
     onStatus: setStatus,
-    onMessage: (msg) => { data = msg; dirty = true; },
+    onMessage: (msg) => dash.setPayload(msg),
   });
 }
-
-selectTab(current);
-requestAnimationFrame(frame);
-// Keep "x s ago" labels fresh on the Plugins tab.
-setInterval(() => { if (current === "plugins") dirty = true; }, 1000);
