@@ -19,6 +19,7 @@ internal sealed class MapService
     private readonly IDataManager data;
     private readonly IPluginLog log;
     private readonly ConcurrentDictionary<uint, MapInfo> infos = new();
+    private readonly ConcurrentDictionary<uint, string> markerJson = new(); // serialized StaticMarkerSet per map
     private readonly LinkedList<KeyValuePair<uint, byte[]>> lru = new(); // most recent first
     private readonly object lruGate = new();
     private readonly SemaphoreSlim renderGate = new(1, 1);
@@ -35,6 +36,16 @@ internal sealed class MapService
         var info = MapData.Describe(data.GetExcelSheet<Map>(), mapId);
         if (info != null) infos[mapId] = info;
         return info;
+    }
+
+    /// <summary>Static markers for a map as JSON (built from Lumina once, then cached), or null for an unknown map.</summary>
+    public string? GetMarkersJson(uint mapId)
+    {
+        if (markerJson.TryGetValue(mapId, out var cached)) return cached;
+        var set = MapMarkerData.Build(data.GetExcelSheet<Map>(), data.GetSubrowExcelSheet<MapMarker>(),
+            data.GetExcelSheet<Aetheryte>(), data.GetExcelSheet<PlaceName>(), mapId);
+        if (set == null) return null;
+        return markerJson[mapId] = Json.Serialize(set);
     }
 
     public byte[]? GetPng(uint mapId)

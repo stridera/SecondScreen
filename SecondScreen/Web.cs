@@ -121,7 +121,7 @@ internal sealed class WebHost : IDisposable
                 // so exactly one socket is bound (LAN + Tailscale IPv4 addresses, no admin / URL ACL).
                 EmbedIO.Net.EndPointManager.UseIpv6 = false;
                 var prefix = config.BindAll ? $"http://*:{config.Port}/" : $"http://localhost:{config.Port}/";
-                var ws = new StateSocketModule("/ws", BuildPayload);
+                var ws = new StateSocketModule("/ws", () => BuildPayload(true));
                 var srv = new WebServer(o => o
                         .WithUrlPrefix(prefix)
                         .WithMode(HttpListenerMode.EmbedIO))
@@ -193,7 +193,7 @@ internal sealed class WebHost : IDisposable
             try
             {
                 if (ws.ClientCount > 0)
-                    await ws.PushAsync(BuildPayload()).ConfigureAwait(false);
+                    await ws.PushAsync(BuildPushPayload()).ConfigureAwait(false);
                 await Task.Delay(PushIntervalMs, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { break; }
@@ -205,12 +205,33 @@ internal sealed class WebHost : IDisposable
         }
     }
 
-    private string BuildPayload() => Json.Serialize(new
+    // Live markers change at ~1 Hz, so pushes (~6-7 Hz) only carry them for the first few pushes after each update
+    // (a couple of repeats in case the client coalesces messages); new connections always get the full payload.
+    private const int LiveRepeats = 3;
+    private long lastLiveSeq = -1;
+    private int liveSends;
+
+    private string BuildPushPayload()
     {
-        snapshot = collector.Current,
-        ipc = ipc.ToDictionary(),
-        trackers = trackers.Progress,
-    });
+        var live = collector.Live;
+        if (live.Seq != lastLiveSeq) { lastLiveSeq = live.Seq; liveSends = 0; }
+        return BuildPayload(liveSends++ < LiveRepeats);
+    }
+
+    private string BuildPayload(bool includeLive) => includeLive
+        ? Json.Serialize(new
+        {
+            snapshot = collector.Current,
+            ipc = ipc.ToDictionary(),
+            trackers = trackers.Progress,
+            live = collector.Live,
+        })
+        : Json.Serialize(new
+        {
+            snapshot = collector.Current,
+            ipc = ipc.ToDictionary(),
+            trackers = trackers.Progress,
+        });
 
     private static Task SendJson(IHttpContext ctx, string json)
     {
@@ -218,10 +239,28 @@ internal sealed class WebHost : IDisposable
         return ctx.SendStringAsync(json, "application/json", Json.Utf8NoBom);
     }
 
-    /// <summary>GET /api/map/{mapId} (metadata JSON) and GET /api/map/{mapId}.png (cached map image).</summary>
+    /// <summary>
+    /// GET /api/map/{mapId} (metadata JSON), GET /api/map/{mapId}.png (cached map image) and
+    /// GET /api/map/{mapId}/markers (static markers from the MapMarker sheet, cached).
+    /// </summary>
     private async Task HandleMapAsync(IHttpContext ctx)
     {
         var rest = ctx.Request.Url.AbsolutePath.Substring("/api/map".Length).Trim('/');
+        if (rest.EndsWith("/markers", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!uint.TryParse(rest.Substring(0, rest.Length - "/markers".Length), out var markerMapId)) throw HttpException.BadRequest("Invalid map id");
+            string? json;
+            try { json = await Task.Run(() => maps.GetMarkersJson(markerMapId)).ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                log.Error(ex, "SecondScreen failed to build markers for map {MapId}", markerMapId);
+                throw HttpException.InternalServerError();
+            }
+            if (json == null) throw HttpException.NotFound();
+            ctx.Response.Headers["Cache-Control"] = "private, max-age=86400";
+            await ctx.SendStringAsync(json, "application/json", Json.Utf8NoBom).ConfigureAwait(false);
+            return;
+        }
         var wantPng = rest.EndsWith(".png", StringComparison.OrdinalIgnoreCase);
         if (wantPng) rest = rest.Substring(0, rest.Length - 4);
         if (!uint.TryParse(rest, out var mapId)) throw HttpException.BadRequest("Invalid map id");
