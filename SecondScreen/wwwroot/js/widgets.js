@@ -4,7 +4,7 @@
 //
 //   mount(el, ctx)      once, the first time the widget is shown. `el` is the widget body (a persistent element:
 //                       the dashboard re-parents it between columns / tabs, so keep your DOM and state alive).
-//   update(payload)     on every data push while visible, and once right after (re)attach. payload = {snapshot, ipc, trackers, live} (live = map markers, see map.js).
+//   update(payload)     on every data push while visible, and once right after (re)attach. payload = {snapshot, ipc, trackers, live, chatSeq, characterVersion} (live = map markers, see map.js; the last two are change counters for chat.js / character.js).
 //                       Keep it cheap and layout-stable (diff, do not rebuild).
 //   resize({width,height,size})  optional; the body size changed. `size` is "compact" (<340px), "regular" or "wide"
 //                       (>=640px). The same value is on `el.dataset.size`, so most widgets just use CSS:
@@ -22,6 +22,8 @@ import * as tracker from "../tabs/tracker.js";
 import * as inventory from "../tabs/inventory.js";
 import * as plugins from "../tabs/plugins.js";
 import * as dailies from "../tabs/dailies.js";
+import * as chat from "../tabs/chat.js";
+import * as character from "../tabs/character.js";
 import { icon } from "./icons.js";
 import { h } from "./ui.js";
 
@@ -46,6 +48,8 @@ export const DEFS = [
     badge: (p) => { const t = p.trackers || []; return t.length ? `${t.filter((x) => x.complete).length}/${t.length}` : ""; } },
   { id: "inventory", title: "Inventory", icon: "inventory", mod: inventory },
   { id: "dailies", title: "Dailies", icon: "dailies", mod: dailies },
+  { id: "chat", title: "Chat", icon: "chat", mod: chat, fill: true },
+  { id: "character", title: "Character", icon: "character", mod: character },
   { id: "plugins", title: "Plugins", icon: "plugins", mod: plugins,
     badge: (p) => { const n = Object.keys(p.ipc || {}).length; return n ? String(n) : ""; } },
 ];

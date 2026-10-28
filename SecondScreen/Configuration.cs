@@ -29,6 +29,9 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Extra words that raise a "mention" notification when they appear in chat (edited from the web UI).</summary>
     public List<string> NotifyKeywords { get; set; } = new();
 
+    /// <summary>XivChatType names the chat widget does not record (combat spam). Edit the config file to change; null / missing = defaults.</summary>
+    public List<string> ChatIgnoredTypes { get; set; } = new(ChatChannels.DefaultIgnored);
+
     /// <summary>Applies config migrations. Returns true if the config changed.</summary>
     public bool Migrate()
     {
