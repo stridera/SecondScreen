@@ -71,7 +71,7 @@ internal sealed class StateSocketModule : WebSocketModule
 }
 
 /// <summary>Owns the EmbedIO server lifecycle. Never throws into callers.</summary>
-internal sealed class WebHost : IDisposable
+internal sealed partial class WebHost : IDisposable
 {
     private const int PushIntervalMs = 150; // ~6-7 Hz
 
@@ -137,6 +137,8 @@ internal sealed class WebHost : IDisposable
                     .WithModule(new ActionModule("/api/search", HttpVerbs.Get, HandleSearchAsync))
                     .WithModule(new ActionModule("/api/icon", HttpVerbs.Get, HandleIconAsync))
                     .WithModule(new ActionModule("/api/inventory", HttpVerbs.Get, HandleInventoryAsync))
+                    .WithModule(new ActionModule("/api/chat", HttpVerbs.Get, HandleChatAsync))
+                    .WithModule(new ActionModule("/api/character", HttpVerbs.Get, HandleCharacterAsync))
                     .WithModule(ws)
                     .WithEmbeddedResources("/", Assembly.GetExecutingAssembly(), "SecondScreen.wwwroot");
 
@@ -228,6 +230,8 @@ internal sealed class WebHost : IDisposable
             ipc = ipc.ToDictionary(),
             trackers = trackers.Progress,
             inventoryVersion = inventory.Version,
+            chatSeq = ChatSeq,
+            characterVersion = CharacterVersion,
             live = collector.Live,
         })
         : Json.Serialize(new
@@ -236,6 +240,8 @@ internal sealed class WebHost : IDisposable
             ipc = ipc.ToDictionary(),
             trackers = trackers.Progress,
             inventoryVersion = inventory.Version,
+            chatSeq = ChatSeq,
+            characterVersion = CharacterVersion,
         });
 
     private static Task SendJson(IHttpContext ctx, string json)

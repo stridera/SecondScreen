@@ -22,6 +22,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IconStore iconStore;
     private readonly TrackerService trackers;
     private readonly InventoryService inventory;
+    private readonly ChatService chat;
+    private readonly CharacterService character;
     private readonly WebHost webHost;
     private readonly IpcGates ipcGates;
     private readonly WindowSystem windowSystem = new("SecondScreen");
@@ -37,6 +39,7 @@ public sealed class Plugin : IDalamudPlugin
         IObjectTable objectTable,
         IPartyList partyList,
         IFateTable fateTable,
+        IChatGui chatGui,
         IPluginLog log)
     {
         this.pluginInterface = pluginInterface;
@@ -53,6 +56,9 @@ public sealed class Plugin : IDalamudPlugin
         trackers = new TrackerService(framework, clientState, pluginInterface, config, log, new MsqModel(dataManager.GameData), playerState);
         inventory = new InventoryService(framework, clientState, playerState, pluginInterface, new ItemInfoStore(dataManager.GameData), log);
         webHost = new WebHost(config, collector, ipcStore, mapService, trackers, gameSearch, iconStore, inventory, log);
+        chat = new ChatService(chatGui, playerState, config, log);
+        character = new CharacterService(framework, clientState, playerState, new ItemInfoStore(dataManager.GameData), new CharacterStatic(dataManager.GameData), log);
+        webHost.AttachChatCharacter(chat, character);
         ipcGates = new IpcGates(pluginInterface, ipcStore, () => webHost.IsRunning);
 
         configWindow = new ConfigWindow(config, webHost, pluginInterface);
@@ -82,6 +88,8 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.RemoveAllWindows();
         ipcGates.Dispose();
         webHost.Dispose();
+        character.Dispose();
+        chat.Dispose();
         inventory.Dispose();
         trackers.Dispose();
         collector.Dispose();
