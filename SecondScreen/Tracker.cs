@@ -2,14 +2,18 @@ using System;
 
 namespace SecondScreen;
 
-/// <summary>Tracker kinds. "goal" (shop/recipe cost trees) and "quest" (quest chains) are reserved for later phases.</summary>
+/// <summary>Tracker kinds. "goal" (shop/recipe cost trees) is reserved for a later phase.</summary>
 public static class TrackerKinds
 {
     public const string Item = "item";
     public const string Achievement = "achievement";
-    // Reserved: public const string Goal = "goal"; public const string Quest = "quest";
+    /// <summary>Main Scenario progress; no target id (the quest list is derived from game data).</summary>
+    public const string Msq = "msq";
+    /// <summary>A single quest (TargetId = Quest sheet row id): complete or not.</summary>
+    public const string Quest = "quest";
+    // Reserved: public const string Goal = "goal";
 
-    public static bool IsSupported(string? kind) => kind == Item || kind == Achievement;
+    public static bool IsSupported(string? kind) => kind == Item || kind == Achievement || kind == Msq || kind == Quest;
 }
 
 /// <summary>
@@ -32,7 +36,7 @@ public sealed class TrackerDef
     /// <summary>Cached icon so the framework thread never needs the name index.</summary>
     public uint IconId { get; set; }
 
-    // Last known server-side achievement progress, persisted so it shows after a restart.
+    // Last known server-side achievement progress (and MSQ done/total, quest completion), persisted so it shows after a restart.
     public long? LastCurrent { get; set; }
     public long? LastMax { get; set; }
     public long LastUpdatedMs { get; set; }
@@ -58,4 +62,6 @@ public sealed record TrackerProgress(
     string Detail,
     long? UpdatedMs,
     bool Pending,
-    bool Live);
+    bool Live,
+    MsqProgressInfo? Msq = null,
+    QuestInfo? Quest = null);
