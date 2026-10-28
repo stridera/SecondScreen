@@ -219,6 +219,9 @@ dialog.share textarea { width: 100%; background: var(--panel2); color: var(--tex
 .wbody[data-size="compact"] img.trk-icon, .wbody[data-size="compact"] div.trk-icon { width: 36px; height: 36px; }
 .wbody[data-size="compact"] .trk-count { font-size: 1.25rem; }
 @media (pointer: coarse) { .wbody .trk-addbtn { min-height: 42px; } .wbody[data-size="compact"] .trk-actions button { width: 40px; height: 40px; } }
+.wbody[data-size="compact"] .trk-card { gap: 8px; }
+.wbody[data-size="compact"] .trk-rail { width: 22px; margin-left: -5px; }
+@media (pointer: coarse) { .wbody .trk-rail { width: 32px; } .wbody[data-size="compact"] .trk-rail { width: 28px; } .wbody .trk-rail button { min-height: 32px; } }
 
 .wbody .mapwrap { gap: 8px; }
 .wbody .mapvp { height: auto !important; flex: 1 1 0; min-height: 0; border-radius: 10px; }

@@ -183,6 +183,34 @@ internal sealed unsafe class TrackerService : IDisposable
         return copy;
     }
 
+    /// <summary>
+    /// Assigns Order = index to the listed ids (unknown and duplicate ids are ignored). Trackers not listed keep their
+    /// relative order and follow the listed ones. Returns how many listed ids matched a tracker.
+    /// </summary>
+    public int Reorder(IReadOnlyList<string> ids)
+    {
+        int matched;
+        lock (gate)
+        {
+            var byId = config.Trackers.GroupBy(t => t.Id).ToDictionary(g => g.Key, g => g.First());
+            var listed = new List<TrackerDef>(ids.Count);
+            var seen = new HashSet<string>();
+            foreach (var id in ids)
+                if (byId.TryGetValue(id, out var def) && seen.Add(id)) listed.Add(def);
+            matched = listed.Count;
+            if (matched == 0) return 0;
+
+            var rest = config.Trackers.Where(t => !seen.Contains(t.Id)).OrderBy(t => t.Order).ThenBy(t => t.Created).ToList();
+            var order = 0;
+            foreach (var t in listed) t.Order = order++;
+            foreach (var t in rest) t.Order = order++;
+            dirty = true;
+            SaveLocked();
+        }
+        evalNow = true;
+        return matched;
+    }
+
     public bool Remove(string id)
     {
         lock (gate)

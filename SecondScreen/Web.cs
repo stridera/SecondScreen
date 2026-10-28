@@ -292,7 +292,7 @@ internal sealed class WebHost : IDisposable
     }
 
     /// <summary>
-    /// GET/POST /api/trackers, PATCH/DELETE /api/trackers/{id}, POST /api/trackers/{id}/refresh.
+    /// GET/POST /api/trackers, POST /api/trackers/reorder {ids}, PATCH/DELETE /api/trackers/{id}, POST /api/trackers/{id}/refresh.
     /// Mutations lock inside TrackerService and save the config; evaluation stays on the framework thread.
     /// </summary>
     private async Task HandleTrackersAsync(IHttpContext ctx)
@@ -330,6 +330,18 @@ internal sealed class WebHost : IDisposable
                 return;
             }
             throw HttpException.MethodNotAllowed();
+        }
+
+        if (parts.Length == 1 && parts[0] == "reorder" && verb == HttpVerbs.Post)
+        {
+            using var body = await ReadBodyAsync(ctx).ConfigureAwait(false);
+            if (!body.RootElement.TryGetProperty("ids", out var idsEl) || idsEl.ValueKind != JsonValueKind.Array) throw HttpException.BadRequest("ids required");
+            var ids = new List<string>();
+            foreach (var e in idsEl.EnumerateArray())
+                if (e.ValueKind == JsonValueKind.String && e.GetString() is { Length: > 0 } s) ids.Add(s);
+            trackers.Reorder(ids);
+            await SendJson(ctx, "{\"ok\":true}").ConfigureAwait(false);
+            return;
         }
 
         var id = parts[0];
