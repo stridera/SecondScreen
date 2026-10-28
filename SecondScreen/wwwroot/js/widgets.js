@@ -4,7 +4,7 @@
 //
 //   mount(el, ctx)      once, the first time the widget is shown. `el` is the widget body (a persistent element:
 //                       the dashboard re-parents it between columns / tabs, so keep your DOM and state alive).
-//   update(payload)     on every data push while visible, and once right after (re)attach. payload = {snapshot, ipc, trackers}.
+//   update(payload)     on every data push while visible, and once right after (re)attach. payload = {snapshot, ipc, trackers, live} (live = map markers, see map.js).
 //                       Keep it cheap and layout-stable (diff, do not rebuild).
 //   resize({width,height,size})  optional; the body size changed. `size` is "compact" (<340px), "regular" or "wide"
 //                       (>=640px). The same value is on `el.dataset.size`, so most widgets just use CSS:

@@ -90,7 +90,13 @@ export class Dashboard {
 
   // ---- public actions --------------------------------------------------------------------------
 
-  setPayload(p) { this.payload = p; this.dirty = true; }
+  setPayload(p) {
+    // The server sends the map's `live` field in only a few pushes per second; keep the newest one so a widget that is
+    // off screen when it arrives (phone tabs) or a payload dropped between frames still sees it. map.js dedupes by seq.
+    if (p.live) this.lastLive = p.live;
+    else if (this.lastLive) p = { ...p, live: this.lastLive };
+    this.payload = p; this.dirty = true;
+  }
 
   /** Called once per animation frame by main. */
   tick() {

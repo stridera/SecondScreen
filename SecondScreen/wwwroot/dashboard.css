@@ -212,6 +212,8 @@ dialog.share textarea { width: 100%; background: var(--panel2); color: var(--tex
 .wbody .trk-addbtn { min-height: 34px; padding: 0 14px; border-radius: 9px; font-size: .86rem; }
 .wbody .trk-list { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 8px; }
 .wbody .trk-card { gap: 10px; }
+.wbody .trk-more { min-height: 38px; margin-top: 6px; }
+.wbody .trk-next { margin-top: 8px; }
 .wbody[data-size="compact"] .trk-actions { flex-direction: column; }
 .wbody[data-size="compact"] .trk-actions button { width: 36px; height: 36px; font-size: 1rem; }
 .wbody[data-size="compact"] img.trk-icon, .wbody[data-size="compact"] div.trk-icon { width: 36px; height: 36px; }
@@ -220,7 +222,12 @@ dialog.share textarea { width: 100%; background: var(--panel2); color: var(--tex
 
 .wbody .mapwrap { gap: 8px; }
 .wbody .mapvp { height: auto !important; flex: 1 1 0; min-height: 0; border-radius: 10px; }
-.wbody .mapname { font-weight: 600; font-size: .9rem; }
+.wbody .mapname { font-weight: 600; font-size: .9rem; flex: 1 1 0; }
+.wbody .maphead { gap: 8px; }
+.wbody .maplayersbtn { min-height: 32px; padding: 0 12px; border-radius: 9px; font-size: .82rem; }
+.wbody .maplayers { top: 40px; }
+.wbody[data-size="compact"] .mapcoords { display: none; }
+@media (pointer: coarse) { .wbody .maplayersbtn { min-height: 40px; } .wbody .maplayers { top: 48px; } }
 .wbody .mapfollow { min-height: 32px; padding: 0 12px; border-radius: 9px; font-size: .82rem; }
 @media (pointer: coarse) { .wbody .mapfollow { min-height: 40px; } }
 
