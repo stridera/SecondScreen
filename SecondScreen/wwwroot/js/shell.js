@@ -3,6 +3,7 @@
 import { PRESETS, exportLayout } from "./layout.js";
 import { h, openPopover, closePopover, toast, isPopoverOpen } from "./ui.js";
 import { icon } from "./icons.js";
+import { initScreenControls, showFullscreenHint } from "./screen.js";
 
 export function initShell(dash) {
   const $ = (id) => document.getElementById(id);
@@ -27,6 +28,7 @@ export function initShell(dash) {
   sync(); // the dashboard rendered once before this listener existed
 
   initShareDialog(dash);
+  initScreenControls();
 }
 
 function openMenu(anchor, dash) {
@@ -50,6 +52,7 @@ function openMenu(anchor, dash) {
   reset.type = "button";
   reset.addEventListener("click", () => { closePopover(); dash.resetSlot(); toast("Layout reset."); });
   box.append(share, reset);
+  if (showFullscreenHint()) box.append(h("div", "menu-sep"), h("div", "menu-note", "Add to Home Screen for fullscreen."));
   openPopover(anchor, box);
 }
 

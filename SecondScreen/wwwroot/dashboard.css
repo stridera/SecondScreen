@@ -24,6 +24,7 @@ html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #06101f; }
 .btn.primary:hover { background: #86b8ff; }
 .btn.icon-only { width: 32px; padding: 0; }
+.btn.pending { border-style: dashed; border-color: var(--accent-line); color: var(--accent); }
 .btn:focus-visible, .tabs button:focus-visible, .menu-item:focus-visible, .chip:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 dialog .btn { min-height: 0; height: 36px; padding: 0 16px; font-size: .9rem; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
 dialog .btn.primary { background: var(--accent); color: #06101f; border-color: var(--accent); }
