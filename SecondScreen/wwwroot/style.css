@@ -74,6 +74,40 @@ dialog button { padding: 12px 18px; font-size: 1rem; border-radius: 8px; border:
   color: #fff; background: #000a; padding: 1px 6px; border-radius: 6px; }
 .mapstage.labels .mk-label { display: block; }
 
+/* Map tab: marker layers, layers panel, popover */
+.mapwrap { position: relative; }
+.maplayersbtn { background: var(--panel2); color: var(--muted); border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 14px; min-height: 44px; font-size: .95rem; cursor: pointer; touch-action: manipulation; }
+.maplayersbtn.on { color: var(--text); border-color: var(--accent); }
+.maplayers { position: absolute; right: 0; top: 52px; z-index: 20; display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 6px 12px; box-shadow: 0 8px 24px #000a; }
+.maplayer { display: flex; align-items: center; gap: 8px; min-height: 40px; font-size: .95rem; cursor: pointer; white-space: nowrap; }
+.maplayer input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+.mk.st, .mk.lv, .mk.pop { transition: none; }
+.mk.st { z-index: 10; } .mk.lv { z-index: 30; } .mk.pm { z-index: 40; } .mk.me { z-index: 50; } .mk.pop { z-index: 100; }
+.mk-ico { position: absolute; left: -13px; top: -13px; width: 26px; height: 26px; }
+.mk-ico img { display: block; width: 26px; height: 26px; filter: drop-shadow(0 1px 1px #000a); }
+.mk-ico.fb { left: -8px; top: -8px; width: 16px; height: 16px; box-sizing: border-box; border-radius: 50%;
+  background: var(--c, #fff); border: 2px solid #fff; box-shadow: 0 0 0 1px #000a; }
+.mk-ico.fb img { display: none; }
+.mk-ico ~ .mk-label { left: 17px; }
+.mk.txt .mk-label { left: 0; top: 0; transform: translate(-50%, -50%); background: none; padding: 0; font-size: 11px;
+  color: #3b3217; text-shadow: 0 0 3px #fff, 0 0 2px #fff, 0 0 2px #fff; }
+.mk-circle { position: absolute; border-radius: 50%; box-sizing: border-box; pointer-events: none;
+  background: rgba(255, 122, 89, .16); border: calc(2px * var(--inv)) solid rgba(255, 122, 89, .75); }
+.mk-badge { position: absolute; left: 0; top: 14px; transform: translateX(-50%); white-space: nowrap; font-size: 10px; font-weight: 700;
+  line-height: 14px; padding: 0 5px; border-radius: 8px; background: #000c; color: #fff; }
+.mapstage.hl-aetheryte .k-aetheryte, .mapstage.hl-label .k-label, .mapstage.hl-service .k-service,
+.mapstage.hl-transition .k-transition, .mapstage.hl-quest .k-quest, .mapstage.hl-fate .k-fate,
+.mapstage.hl-gather .k-gather, .mapstage.hl-flag .k-flag, .mapstage.hl-party .k-party { display: none; }
+.mappop { position: absolute; left: 0; bottom: 20px; transform: translateX(-50%); width: max-content; max-width: 240px;
+  box-sizing: border-box; background: #12151def; color: #fff; border: 1px solid #3a4157; border-radius: 10px;
+  padding: 6px 10px; font-size: 12px; line-height: 1.4; pointer-events: none; box-shadow: 0 4px 14px #0009; }
+.mappop-t { font-weight: 700; font-size: 13px; }
+.mappop-b { white-space: pre-line; color: #c5cbe0; }
+.mappop-b:empty { display: none; }
+.mappop-c { color: var(--muted); font-variant-numeric: tabular-nums; }
+
 /* Tracker tab */
 .trk-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .trk-head h2 { margin: 0; font-size: 1.1rem; }

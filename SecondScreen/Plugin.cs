@@ -34,6 +34,7 @@ public sealed class Plugin : IDalamudPlugin
         IClientState clientState,
         IObjectTable objectTable,
         IPartyList partyList,
+        IFateTable fateTable,
         IPluginLog log)
     {
         this.pluginInterface = pluginInterface;
@@ -43,7 +44,7 @@ public sealed class Plugin : IDalamudPlugin
         config = pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         if (config.Migrate() | config.EnsureToken()) pluginInterface.SavePluginConfig(config);
 
-        collector = new Collector(framework, clientState, objectTable, partyList, log);
+        collector = new Collector(framework, clientState, objectTable, partyList, fateTable, dataManager, log);
         mapService = new MapService(dataManager, log);
         gameSearch = new GameSearch(dataManager.GameData);
         iconStore = new IconStore(dataManager.GameData);
