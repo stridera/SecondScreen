@@ -82,6 +82,7 @@ internal sealed class WebHost : IDisposable
     private readonly TrackerService trackers;
     private readonly GameSearch search;
     private readonly IconStore icons;
+    private readonly InventoryService inventory;
     private readonly IPluginLog log;
     private readonly object gate = new();
 
@@ -92,7 +93,7 @@ internal sealed class WebHost : IDisposable
     private Task? pushTask;
 
     public WebHost(Configuration config, Collector collector, IpcStore ipc, MapService maps,
-        TrackerService trackers, GameSearch search, IconStore icons, IPluginLog log)
+        TrackerService trackers, GameSearch search, IconStore icons, InventoryService inventory, IPluginLog log)
     {
         this.config = config;
         this.collector = collector;
@@ -101,6 +102,7 @@ internal sealed class WebHost : IDisposable
         this.trackers = trackers;
         this.search = search;
         this.icons = icons;
+        this.inventory = inventory;
         this.log = log;
     }
 
@@ -134,6 +136,7 @@ internal sealed class WebHost : IDisposable
                     .WithModule(new ActionModule("/api/trackers", HttpVerbs.Any, HandleTrackersAsync))
                     .WithModule(new ActionModule("/api/search", HttpVerbs.Get, HandleSearchAsync))
                     .WithModule(new ActionModule("/api/icon", HttpVerbs.Get, HandleIconAsync))
+                    .WithModule(new ActionModule("/api/inventory", HttpVerbs.Get, HandleInventoryAsync))
                     .WithModule(ws)
                     .WithEmbeddedResources("/", Assembly.GetExecutingAssembly(), "SecondScreen.wwwroot");
 
@@ -224,6 +227,7 @@ internal sealed class WebHost : IDisposable
             snapshot = collector.Current,
             ipc = ipc.ToDictionary(),
             trackers = trackers.Progress,
+            inventoryVersion = inventory.Version,
             live = collector.Live,
         })
         : Json.Serialize(new
@@ -231,6 +235,7 @@ internal sealed class WebHost : IDisposable
             snapshot = collector.Current,
             ipc = ipc.ToDictionary(),
             trackers = trackers.Progress,
+            inventoryVersion = inventory.Version,
         });
 
     private static Task SendJson(IHttpContext ctx, string json)
@@ -442,6 +447,19 @@ internal sealed class WebHost : IDisposable
         ctx.Response.Headers["Cache-Control"] = "private, max-age=604800";
         using var stream = ctx.OpenResponseStream(false, false);
         await stream.WriteAsync(png, 0, png.Length).ConfigureAwait(false);
+    }
+
+    /// <summary>GET /api/inventory: containers, retainers, gil, free slots and static item info; "version" matches inventoryVersion in the WebSocket payload.</summary>
+    private async Task HandleInventoryAsync(IHttpContext ctx)
+    {
+        string body;
+        try { body = await Task.Run(() => inventory.GetJson()).ConfigureAwait(false); }
+        catch (Exception ex)
+        {
+            log.Error(ex, "SecondScreen failed to build the inventory response");
+            throw HttpException.InternalServerError();
+        }
+        await SendJson(ctx, body).ConfigureAwait(false);
     }
 
     private void StopInternal()
