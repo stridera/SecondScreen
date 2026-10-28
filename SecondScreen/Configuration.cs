@@ -22,6 +22,9 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Tracker tab definitions (v3). Only access through TrackerService, which locks around it.</summary>
     public List<TrackerDef> Trackers { get; set; } = new();
 
+    /// <summary>Extra words that raise a "mention" notification when they appear in chat (edited from the web UI).</summary>
+    public List<string> NotifyKeywords { get; set; } = new();
+
     /// <summary>Applies config migrations. Returns true if the config changed.</summary>
     public bool Migrate()
     {
