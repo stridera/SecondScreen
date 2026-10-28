@@ -3,15 +3,16 @@ import * as party from "../tabs/party.js";
 import * as map from "../tabs/map.js";
 import * as inventory from "../tabs/inventory.js";
 import * as plugins from "../tabs/plugins.js";
+import * as tracker from "../tabs/tracker.js";
 
-const TABS = { party, map, inventory, plugins };
+const TABS = { party, map, tracker, inventory, plugins };
 const view = document.getElementById("view");
 const statusEl = document.getElementById("status");
 const statusText = document.getElementById("status-text");
 
 let current = localStorage.getItem("ss.tab") || "party";
 if (!TABS[current]) current = "party";
-let data = { snapshot: null, ipc: {} };
+let data = { snapshot: null, ipc: {}, trackers: [] };
 let dirty = true;
 
 // Token: URL query wins and is persisted; strip it from the address bar afterwards.

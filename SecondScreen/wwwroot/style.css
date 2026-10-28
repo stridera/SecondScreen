@@ -73,3 +73,57 @@ dialog button { padding: 12px 18px; font-size: 1rem; border-radius: 8px; border:
 .mk-label { position: absolute; left: 11px; top: -9px; display: none; white-space: nowrap; font-size: 12px; font-weight: 600;
   color: #fff; background: #000a; padding: 1px 6px; border-radius: 6px; }
 .mapstage.labels .mk-label { display: block; }
+
+/* Tracker tab */
+.trk-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.trk-head h2 { margin: 0; font-size: 1.1rem; }
+.trk-addbtn, .trk-primary { background: var(--accent); color: #05101f; border: 0; border-radius: 10px; padding: 10px 18px;
+  min-height: 44px; font-size: 1rem; font-weight: 600; cursor: pointer; touch-action: manipulation; }
+.trk-secondary { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px 18px;
+  min-height: 44px; font-size: 1rem; cursor: pointer; touch-action: manipulation; }
+.trk-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.trk-list > .empty { grid-column: 1 / -1; }
+.trk-card { display: flex; gap: 12px; align-items: flex-start; }
+.trk-card.complete { border-color: var(--hp); }
+.trk-card.stale { opacity: .75; }
+img.trk-icon, div.trk-icon { width: 44px; height: 44px; flex: none; border-radius: 8px; background: var(--panel2); object-fit: contain; }
+.trk-main { flex: 1 1 auto; min-width: 0; }
+.trk-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.trk-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trk-check { color: var(--hp); font-weight: 700; }
+.trk-kind { color: var(--muted); font-size: .78rem; margin-bottom: 2px; }
+.trk-bar > i { background: var(--accent); }
+.trk-bar.done > i { background: var(--hp); }
+.trk-count { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.trk-count.done { color: var(--hp); }
+.trk-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; color: var(--muted); font-size: .82rem; }
+.trk-ok { color: var(--hp); font-weight: 600; }
+.trk-actions { display: flex; flex-direction: column; gap: 6px; flex: none; }
+.trk-actions button { width: 44px; height: 44px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel2);
+  color: var(--text); font-size: 1.15rem; cursor: pointer; touch-action: manipulation; }
+.trk-actions button.danger { color: var(--hp-low); }
+.trk-actions button:disabled { opacity: .4; }
+@media (min-width: 700px) { .trk-actions { flex-direction: row; } }
+.trk-sheet { width: min(480px, 94vw); max-height: 88vh; overflow: auto; padding: 14px; }
+.trk-sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.trk-sheet-head h3 { margin: 0; }
+.trk-sheet button.trk-x { width: 44px; background: transparent; color: var(--muted); border: 1px solid var(--border); }
+.trk-kinds { display: flex; gap: 6px; margin-bottom: 10px; }
+.trk-sheet .trk-kinds button { flex: 1; background: var(--panel2); color: var(--muted); border: 1px solid var(--border); }
+.trk-sheet .trk-kinds button.on { color: var(--text); border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.trk-results { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; -webkit-overflow-scrolling: touch; }
+.trk-sheet button.trk-result { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; min-height: 56px;
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border); padding: 6px 10px; }
+.trk-picked { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.trk-rtext { display: flex; flex-direction: column; min-width: 0; }
+.trk-rname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trk-rsub { color: var(--muted); font-size: .8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trk-field { display: block; margin-bottom: 12px; }
+.trk-field > span { display: block; color: var(--muted); font-size: .85rem; margin-bottom: 4px; }
+.trk-field input { margin-bottom: 0; }
+.trk-row { display: flex; gap: 8px; justify-content: flex-end; }
+.trk-sheet .trk-row button.trk-primary { background: var(--accent); color: #05101f; }
+.trk-sheet .trk-row button.trk-secondary { background: var(--panel2); color: var(--text); border: 1px solid var(--border); }
+.trk-hint { color: var(--muted); padding: 14px 4px; text-align: center; }
+.trk-hint.err, .trk-err { color: var(--hp-low); }
+.trk-err { margin-top: 10px; font-size: .9rem; }

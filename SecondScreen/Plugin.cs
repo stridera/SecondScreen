@@ -18,6 +18,9 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Collector collector;
     private readonly IpcStore ipcStore = new();
     private readonly MapService mapService;
+    private readonly GameSearch gameSearch;
+    private readonly IconStore iconStore;
+    private readonly TrackerService trackers;
     private readonly WebHost webHost;
     private readonly IpcGates ipcGates;
     private readonly WindowSystem windowSystem = new("SecondScreen");
@@ -42,7 +45,10 @@ public sealed class Plugin : IDalamudPlugin
 
         collector = new Collector(framework, clientState, objectTable, partyList, log);
         mapService = new MapService(dataManager, log);
-        webHost = new WebHost(config, collector, ipcStore, mapService, log);
+        gameSearch = new GameSearch(dataManager.GameData);
+        iconStore = new IconStore(dataManager.GameData);
+        trackers = new TrackerService(framework, clientState, pluginInterface, config, log);
+        webHost = new WebHost(config, collector, ipcStore, mapService, trackers, gameSearch, iconStore, log);
         ipcGates = new IpcGates(pluginInterface, ipcStore, () => webHost.IsRunning);
 
         configWindow = new ConfigWindow(config, webHost, pluginInterface);
@@ -72,6 +78,7 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.RemoveAllWindows();
         ipcGates.Dispose();
         webHost.Dispose();
+        trackers.Dispose();
         collector.Dispose();
         ipcStore.ClearAll();
     }

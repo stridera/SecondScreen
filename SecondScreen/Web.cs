@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
@@ -77,6 +79,9 @@ internal sealed class WebHost : IDisposable
     private readonly Collector collector;
     private readonly IpcStore ipc;
     private readonly MapService maps;
+    private readonly TrackerService trackers;
+    private readonly GameSearch search;
+    private readonly IconStore icons;
     private readonly IPluginLog log;
     private readonly object gate = new();
 
@@ -86,12 +91,16 @@ internal sealed class WebHost : IDisposable
     private Task? runTask;
     private Task? pushTask;
 
-    public WebHost(Configuration config, Collector collector, IpcStore ipc, MapService maps, IPluginLog log)
+    public WebHost(Configuration config, Collector collector, IpcStore ipc, MapService maps,
+        TrackerService trackers, GameSearch search, IconStore icons, IPluginLog log)
     {
         this.config = config;
         this.collector = collector;
         this.ipc = ipc;
         this.maps = maps;
+        this.trackers = trackers;
+        this.search = search;
+        this.icons = icons;
         this.log = log;
     }
 
@@ -122,6 +131,9 @@ internal sealed class WebHost : IDisposable
                     .WithModule(new ActionModule("/api/ipc", HttpVerbs.Get,
                         ctx => SendJson(ctx, Json.Serialize(ipc.ToDictionary()))))
                     .WithModule(new ActionModule("/api/map", HttpVerbs.Get, HandleMapAsync))
+                    .WithModule(new ActionModule("/api/trackers", HttpVerbs.Any, HandleTrackersAsync))
+                    .WithModule(new ActionModule("/api/search", HttpVerbs.Get, HandleSearchAsync))
+                    .WithModule(new ActionModule("/api/icon", HttpVerbs.Get, HandleIconAsync))
                     .WithModule(ws)
                     .WithEmbeddedResources("/", Assembly.GetExecutingAssembly(), "SecondScreen.wwwroot");
 
@@ -197,6 +209,7 @@ internal sealed class WebHost : IDisposable
     {
         snapshot = collector.Current,
         ipc = ipc.ToDictionary(),
+        trackers = trackers.Progress,
     });
 
     private static Task SendJson(IHttpContext ctx, string json)
@@ -235,6 +248,142 @@ internal sealed class WebHost : IDisposable
         ctx.Response.ContentType = "image/png";
         ctx.Response.ContentLength64 = png.Length;
         ctx.Response.Headers["Cache-Control"] = "private, max-age=86400";
+        using var stream = ctx.OpenResponseStream(false, false);
+        await stream.WriteAsync(png, 0, png.Length).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// GET/POST /api/trackers, PATCH/DELETE /api/trackers/{id}, POST /api/trackers/{id}/refresh.
+    /// Mutations lock inside TrackerService and save the config; evaluation stays on the framework thread.
+    /// </summary>
+    private async Task HandleTrackersAsync(IHttpContext ctx)
+    {
+        var rest = ctx.Request.Url.AbsolutePath.Substring("/api/trackers".Length).Trim('/');
+        var parts = rest.Length == 0 ? Array.Empty<string>() : rest.Split('/');
+        var verb = ctx.Request.HttpVerb;
+
+        if (parts.Length == 0)
+        {
+            if (verb == HttpVerbs.Get)
+            {
+                await SendJson(ctx, Json.Serialize(trackers.Progress)).ConfigureAwait(false);
+                return;
+            }
+            if (verb == HttpVerbs.Post)
+            {
+                using var body = await ReadBodyAsync(ctx).ConfigureAwait(false);
+                var root = body.RootElement;
+                var kind = GetString(root, "kind");
+                if (!GameSearch.IsKnownKind(kind) || !TrackerKinds.IsSupported(kind)) throw HttpException.BadRequest("Unsupported kind");
+                if (!TryGetUInt(root, "targetId", out var targetId) || targetId == 0) throw HttpException.BadRequest("targetId required");
+                var count = GetOptionalInt(root, "targetCount", out _);
+                var found = await search.FindAsync(kind!, targetId).ConfigureAwait(false)
+                            ?? throw HttpException.BadRequest("Unknown id for this kind");
+                var title = GetString(root, "title")?.Trim();
+                var includeHq = !root.TryGetProperty("includeHq", out var hq) || hq.ValueKind != JsonValueKind.False;
+                var def = trackers.Add(kind!, targetId, count, string.IsNullOrEmpty(title) ? found.Name : title, found.IconId, includeHq);
+                await SendJson(ctx, Json.Serialize(def)).ConfigureAwait(false);
+                return;
+            }
+            throw HttpException.MethodNotAllowed();
+        }
+
+        var id = parts[0];
+        if (parts.Length == 1 && verb == HttpVerbs.Delete)
+        {
+            if (!trackers.Remove(id)) throw HttpException.NotFound();
+            await SendJson(ctx, "{\"ok\":true}").ConfigureAwait(false);
+            return;
+        }
+        if (parts.Length == 1 && verb == HttpVerbs.Patch)
+        {
+            using var body = await ReadBodyAsync(ctx).ConfigureAwait(false);
+            var root = body.RootElement;
+            var count = GetOptionalInt(root, "targetCount", out var hasCount);
+            int? order = root.TryGetProperty("order", out var o) && o.ValueKind == JsonValueKind.Number && o.TryGetInt32(out var ov) ? ov : null;
+            var def = trackers.Update(id, hasCount, count, GetString(root, "title"), order) ?? throw HttpException.NotFound();
+            await SendJson(ctx, Json.Serialize(def)).ConfigureAwait(false);
+            return;
+        }
+        if (parts.Length == 2 && parts[1] == "refresh" && verb == HttpVerbs.Post)
+        {
+            if (!trackers.RequestRefresh(id)) throw HttpException.NotFound();
+            await SendJson(ctx, "{\"ok\":true}").ConfigureAwait(false);
+            return;
+        }
+        throw HttpException.NotFound();
+    }
+
+    private static async Task<JsonDocument> ReadBodyAsync(IHttpContext ctx)
+    {
+        if (ctx.Request.ContentLength64 > 16 * 1024) throw HttpException.BadRequest("Body too large");
+        var text = await ctx.GetRequestBodyAsStringAsync().ConfigureAwait(false);
+        try
+        {
+            var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(text) ? "{}" : text);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) { doc.Dispose(); throw HttpException.BadRequest("Expected a JSON object"); }
+            return doc;
+        }
+        catch (JsonException)
+        {
+            throw HttpException.BadRequest("Invalid JSON");
+        }
+    }
+
+    private static string? GetString(JsonElement root, string name)
+        => root.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
+
+    private static bool TryGetUInt(JsonElement root, string name, out uint value)
+    {
+        value = 0;
+        return root.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetUInt32(out value);
+    }
+
+    /// <summary>Reads an optional int that may be absent (present=false), null (present, clears) or a number.</summary>
+    private static int? GetOptionalInt(JsonElement root, string name, out bool present)
+    {
+        present = root.TryGetProperty(name, out var p);
+        if (!present || p.ValueKind != JsonValueKind.Number) return null;
+        return p.TryGetInt32(out var v) ? v : null;
+    }
+
+    /// <summary>GET /api/search?kind=item|achievement&q=... -> top 25 { id, name, iconId, subtitle }.</summary>
+    private async Task HandleSearchAsync(IHttpContext ctx)
+    {
+        var query = ctx.GetRequestQueryData();
+        var kind = query["kind"];
+        if (!GameSearch.IsKnownKind(kind)) throw HttpException.BadRequest("kind must be item or achievement");
+        try
+        {
+            var results = await search.SearchAsync(kind!, query["q"] ?? "").ConfigureAwait(false);
+            await SendJson(ctx, Json.Serialize(results)).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not HttpException)
+        {
+            log.Error(ex, "SecondScreen search failed");
+            throw HttpException.InternalServerError();
+        }
+    }
+
+    /// <summary>GET /api/icon/{iconId}.png (game icon rendered to PNG, cached).</summary>
+    private async Task HandleIconAsync(IHttpContext ctx)
+    {
+        var rest = ctx.Request.Url.AbsolutePath.Substring("/api/icon".Length).Trim('/');
+        if (rest.EndsWith(".png", StringComparison.OrdinalIgnoreCase)) rest = rest.Substring(0, rest.Length - 4);
+        if (!uint.TryParse(rest, out var iconId)) throw HttpException.BadRequest("Invalid icon id");
+
+        byte[]? png;
+        try { png = await Task.Run(() => icons.GetPng(iconId)).ConfigureAwait(false); }
+        catch (Exception ex)
+        {
+            log.Error(ex, "SecondScreen failed to render icon {IconId}", iconId);
+            throw HttpException.InternalServerError();
+        }
+        if (png == null) throw HttpException.NotFound();
+
+        ctx.Response.ContentType = "image/png";
+        ctx.Response.ContentLength64 = png.Length;
+        ctx.Response.Headers["Cache-Control"] = "private, max-age=604800";
         using var stream = ctx.OpenResponseStream(false, false);
         await stream.WriteAsync(png, 0, png.Length).ConfigureAwait(false);
     }

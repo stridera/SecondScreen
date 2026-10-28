@@ -4,7 +4,7 @@ A Dalamud plugin for FFXIV that hosts a small embedded web server (EmbedIO) so a
 (iPad, Android, a second PC) can show live game data. Other plugins can publish their own data to it
 through Dalamud IPC.
 
-Tabs: **Party** (live HP/MP cards), **Map** (placeholder), **Inventory** (placeholder), **Plugins** (IPC-published data).
+Tabs: **Party** (live HP/MP cards), **Map** (zone map with live markers), **Tracker** (item/currency and achievement trackers), **Inventory** (placeholder), **Plugins** (IPC-published data).
 
 ## Build
 
@@ -50,7 +50,19 @@ network. `/api/*` and `/ws` require the token (`?token=` or `Authorization: Bear
 
 - `GET /api/state` - latest snapshot JSON
 - `GET /api/ipc` - data published by other plugins, `{ plugin: { key: { updated, value } } }`
-- `WS /ws` - pushes `{ snapshot, ipc }` about 6-7 times per second
+- `WS /ws` - pushes `{ snapshot, ipc, trackers }` about 6-7 times per second
+- `GET /api/trackers` - evaluated tracker list; `POST /api/trackers` `{kind, targetId, targetCount?, title?}`;
+  `PATCH /api/trackers/{id}` `{targetCount?, title?, order?}` (`targetCount: null` clears the target);
+  `DELETE /api/trackers/{id}`; `POST /api/trackers/{id}/refresh` (re-request achievement progress)
+- `GET /api/search?kind=item|achievement&q=...` - top 25 `{id, name, iconId, subtitle}` (case-insensitive substring)
+- `GET /api/icon/{iconId}.png` - game icon rendered to PNG
+
+## Tracker tab
+
+Trackers are stored in the plugin config (`Configuration.Trackers`, config version 3). Kinds: `item` (counts bags,
+armoury, equipped, crystals, currency and the saddlebag when loaded; retainers are not counted) and `achievement`
+(completion flag plus server-side progress, requested one achievement at a time, at most every 5 minutes, on add
+and on the refresh button). Kinds `goal` and `quest` are reserved for later phases.
 
 ## IPC for other plugins
 
@@ -71,4 +83,5 @@ Invalid JSON is stored as a plain string. Call `Clear` when your plugin unloads.
 ## TODO
 
 - QR code for the connect URL in the settings window
-- Real Map tab, Inventory tab
+- Inventory tab
+- Tracker phase 2: shop/recipe "goal" trackers and quest chains
