@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading.Tasks;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -12,7 +13,8 @@ namespace SecondScreen;
 /// <summary>
 /// Owns tracker definitions and their evaluation. Game memory is only touched on the framework thread:
 /// inventory counts are re-evaluated at ~1 Hz and published as an immutable list through a volatile field;
-/// achievement progress is fetched one request at a time (see <see cref="PumpAchievements"/>).
+/// achievement progress is fetched one request at a time (see <see cref="PumpAchievements"/>); quest completion
+/// (MSQ / single quest trackers) is read from QuestManager at most every <see cref="QuestRefreshMs"/>.
 /// Web threads call the CRUD methods, which lock around the config list and then save.
 /// </summary>
 internal sealed unsafe class TrackerService : IDisposable
@@ -24,6 +26,7 @@ internal sealed unsafe class TrackerService : IDisposable
     private const long RetryBackoffMs = 60 * 1000;
     private const long CompletedRequestIntervalMs = 30 * 1000;
     private const long SaveDebounceMs = 5000;
+    private const long QuestRefreshMs = 10 * 1000;
 
     // Everything an item tracker can be sitting in. Retainers and the armoire/glamour dresser are not covered.
     private static readonly InventoryType[] ItemContainers =
@@ -54,6 +57,8 @@ internal sealed unsafe class TrackerService : IDisposable
     private readonly IDalamudPluginInterface pi;
     private readonly Configuration config;
     private readonly IPluginLog log;
+    private readonly MsqModel quests;
+    private readonly IPlayerState playerState;
     private readonly object gate = new(); // guards config.Trackers, forced and the dirty flag
 
     private readonly HashSet<uint> forced = new();            // achievements to re-request now (gate)
@@ -69,13 +74,26 @@ internal sealed unsafe class TrackerService : IDisposable
     private long lastCompletedRequest = long.MinValue / 2;
     private bool errorLogged;
 
-    public TrackerService(IFramework framework, IClientState clientState, IDalamudPluginInterface pi, Configuration config, IPluginLog log)
+    // Quest completion cache (framework thread only). Completion never reverts, so once a quest is seen complete it is
+    // kept; only the still-incomplete quests are re-checked, at most every QuestRefreshMs. Reset when the character changes.
+    private readonly HashSet<uint> completedQuests = new();
+    private readonly HashSet<uint> checkedQuests = new();     // ids asked at least once since the last reset
+    private readonly Dictionary<uint, QuestInfo?> questInfoCache = new();
+    private ulong questCharacter;
+    private long lastQuestRefresh = long.MinValue / 2;
+    private int questVersion;                                  // bumped whenever completedQuests/character changes
+    private MsqSnapshot? msqSnapshot;
+    private int msqSnapshotVersion = -1;
+
+    public TrackerService(IFramework framework, IClientState clientState, IDalamudPluginInterface pi, Configuration config, IPluginLog log, MsqModel quests, IPlayerState playerState)
     {
         this.framework = framework;
         this.clientState = clientState;
         this.pi = pi;
         this.config = config;
         this.log = log;
+        this.quests = quests;
+        this.playerState = playerState;
         this.framework.Update += OnUpdate;
     }
 
@@ -92,7 +110,7 @@ internal sealed unsafe class TrackerService : IDisposable
 
     public TrackerDef Add(string kind, uint targetId, int? targetCount, string title, uint iconId, bool includeHq = true)
     {
-        if (!TrackerKinds.IsSupported(kind)) throw new ArgumentException("Unsupported tracker kind");
+        if (!TrackerKinds.IsSupported(kind) || kind == TrackerKinds.Msq) throw new ArgumentException("Unsupported tracker kind");
         var def = new TrackerDef
         {
             Kind = kind,
@@ -112,6 +130,38 @@ internal sealed unsafe class TrackerService : IDisposable
         }
         evalNow = true;
         return def.Clone();
+    }
+
+    /// <summary>
+    /// Adds the (single) Main Scenario tracker, or returns the existing one. Awaits the MSQ model build only to pick
+    /// the card icon, so it never blocks a web thread.
+    /// </summary>
+    public Task<TrackerDef> AddMsqAsync()
+    {
+        lock (gate)
+        {
+            var existing = config.Trackers.FirstOrDefault(t => t.Kind == TrackerKinds.Msq);
+            if (existing != null) return Task.FromResult(existing.Clone());
+        }
+        return quests.GetAsync().ContinueWith(t => AddMsqCore(t.Result.IconId), TaskScheduler.Default);
+    }
+
+    private TrackerDef AddMsqCore(uint iconId)
+    {
+        TrackerDef copy;
+        lock (gate)
+        {
+            var existing = config.Trackers.FirstOrDefault(t => t.Kind == TrackerKinds.Msq);
+            if (existing != null) return existing.Clone();
+            var def = new TrackerDef { Kind = TrackerKinds.Msq, Title = "Main Scenario", IconId = iconId };
+            def.Order = config.Trackers.Count == 0 ? 0 : config.Trackers.Max(t => t.Order) + 1;
+            config.Trackers.Add(def);
+            dirty = true;
+            SaveLocked();
+            copy = def.Clone();
+        }
+        evalNow = true;
+        return copy;
     }
 
     /// <summary>Applies the supplied fields. Returns the updated copy, or null if the id is unknown.</summary>
@@ -326,6 +376,14 @@ internal sealed unsafe class TrackerService : IDisposable
         var achLoaded = ach != null && ach->IsLoaded();
         var activeId = active?.AchievementId;
 
+        var wantMsq = defs.Any(d => d.Kind == TrackerKinds.Msq);
+        var wantQuest = defs.Any(d => d.Kind == TrackerKinds.Quest);
+        MsqModel.Data? msqData = null;
+        var questDataReady = false;
+        if (wantMsq || wantQuest) // also kicks off the one-time background model build
+            questDataReady = quests.TryGetReady(out msqData);
+        if (loggedIn && (wantMsq || wantQuest)) RefreshQuestCompletion(defs, wantMsq && questDataReady ? msqData : null);
+
         var list = new List<TrackerProgress>(defs.Length);
         foreach (var d in defs)
         {
@@ -337,7 +395,13 @@ internal sealed unsafe class TrackerService : IDisposable
                 case TrackerKinds.Achievement:
                     list.Add(EvaluateAchievement(d, loggedIn, ach, achLoaded, activeId));
                     break;
-                // Future kinds ("goal", "quest") plug in here; unknown kinds are shown but never evaluated.
+                case TrackerKinds.Msq:
+                    list.Add(EvaluateMsq(d, loggedIn, questDataReady ? msqData : null));
+                    break;
+                case TrackerKinds.Quest:
+                    list.Add(EvaluateQuest(d, loggedIn, questDataReady));
+                    break;
+                // Future kinds ("goal") plug in here; unknown kinds are shown but never evaluated.
                 default:
                     list.Add(Base(d, null, null, false, "Unsupported tracker kind", null, false, false));
                     break;
@@ -346,9 +410,120 @@ internal sealed unsafe class TrackerService : IDisposable
         return list;
     }
 
-    private static TrackerProgress Base(TrackerDef d, long? current, long? max, bool complete, string detail, long? updated, bool pending, bool live)
+    private static TrackerProgress Base(TrackerDef d, long? current, long? max, bool complete, string detail, long? updated, bool pending, bool live,
+        MsqProgressInfo? msq = null, QuestInfo? quest = null)
         => new(d.Id, d.Kind, d.TargetId, d.TargetCount, d.IncludeHq, d.Title, d.Order, d.Created, d.IconId,
-            current, max, complete, detail, updated, pending, live);
+            current, max, complete, detail, updated, pending, live, msq, quest);
+
+    // ---- quests (framework thread) ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// Refreshes <see cref="completedQuests"/> for the quests the current trackers need (all MSQ quests when an MSQ
+    /// tracker exists and the model is ready, plus each single-quest tracker). QuestManager.IsQuestComplete takes the
+    /// quest id without the 0x10000 sheet offset (a ushort); the uint overload masks with 0xFFFF, so the Quest sheet
+    /// row id is passed through <see cref="QuestKey"/>.
+    /// </summary>
+    private void RefreshQuestCompletion(TrackerDef[] defs, MsqModel.Data? msq)
+    {
+        var cid = playerState.IsLoaded ? playerState.ContentId : 0;
+        if (cid != questCharacter)
+        {
+            questCharacter = cid;
+            completedQuests.Clear();
+            checkedQuests.Clear();
+            lastQuestRefresh = long.MinValue / 2;
+            questInfoCache.Clear();
+            questVersion++;
+        }
+
+        var wanted = new List<uint>();
+        if (msq != null && defs.Any(d => d.Kind == TrackerKinds.Msq))
+            foreach (var q in msq.Ordered) wanted.Add(q.Id);
+        foreach (var d in defs)
+            if (d.Kind == TrackerKinds.Quest && d.TargetId != 0) wanted.Add(d.TargetId);
+
+        var now = NowMs();
+        var stale = now - lastQuestRefresh >= QuestRefreshMs;
+        if (!stale && !wanted.Any(id => !checkedQuests.Contains(id))) return; // nothing new to ask, nothing due
+        lastQuestRefresh = now;
+
+        var changed = false;
+        foreach (var id in wanted)
+        {
+            if (completedQuests.Contains(id)) continue; // completion never reverts
+            checkedQuests.Add(id);
+            if (QuestManager.IsQuestComplete(QuestKey(id))) { completedQuests.Add(id); changed = true; }
+        }
+        if (changed) questVersion++;
+    }
+
+    /// <summary>Quest sheet row id (65536 + n) -> the ushort the game API wants (n).</summary>
+    private static ushort QuestKey(uint rowId) => (ushort)(rowId - 0x10000);
+
+    private TrackerProgress EvaluateMsq(TrackerDef d, bool loggedIn, MsqModel.Data? data)
+    {
+        if (!loggedIn || data == null)
+        {
+            var known = d.LastMax is > 0;
+            var detail = !loggedIn
+                ? (known ? "Not logged in; showing last known progress" : "Not logged in")
+                : "Loading quest data...";
+            return Base(d, known ? d.LastCurrent : null, known ? d.LastMax : null, d.LastComplete, detail, null, false, false);
+        }
+
+        if (msqSnapshot == null || msqSnapshotVersion != questVersion)
+        {
+            msqSnapshot = data.Evaluate(completedQuests.Contains, DescribeQuest);
+            msqSnapshotVersion = questVersion;
+        }
+        var snap = msqSnapshot;
+        var complete = snap.Total > 0 && snap.Done >= snap.Total;
+        if (d.LastCurrent != snap.Done || d.LastMax != snap.Total || d.LastComplete != complete)
+        {
+            lock (gate)
+            {
+                foreach (var t in config.Trackers)
+                {
+                    if (t.Kind != TrackerKinds.Msq) continue;
+                    t.LastCurrent = snap.Done;
+                    t.LastMax = snap.Total;
+                    t.LastComplete = complete;
+                    t.LastUpdatedMs = WallMs();
+                }
+                dirty = true;
+            }
+        }
+        return Base(d, snap.Done, snap.Total, complete,
+            "Main Scenario quests for your character; mutually exclusive starting city / Grand Company chains are counted once. Checked every 10 seconds",
+            null, false, true, snap.Detail);
+    }
+
+    private TrackerProgress EvaluateQuest(TrackerDef d, bool loggedIn, bool dataReady)
+    {
+        var info = dataReady ? DescribeQuest(d.TargetId) : null;
+        var complete = loggedIn ? completedQuests.Contains(d.TargetId) : d.LastComplete;
+        if (loggedIn && complete != d.LastComplete)
+        {
+            lock (gate)
+            {
+                foreach (var t in config.Trackers)
+                    if (t.Kind == TrackerKinds.Quest && t.TargetId == d.TargetId) t.LastComplete = complete;
+                dirty = true;
+            }
+        }
+        string detail;
+        if (info != null) detail = $"{info.Name} \u00B7 Lv {info.Level}" + (info.Expansion.Length > 0 ? $" \u00B7 {info.Expansion}" : "");
+        else detail = dataReady ? d.Title : "Loading quest data...";
+        if (!loggedIn) detail += " (not logged in; showing last known state)";
+        return Base(d, complete ? 1 : 0, 1, complete, detail, null, false, loggedIn, null, info);
+    }
+
+    private QuestInfo? DescribeQuest(uint questId)
+    {
+        if (!questInfoCache.TryGetValue(questId, out var info))
+            questInfoCache[questId] = info = quests.Describe(questId);
+        return info;
+    }
 
     private static TrackerProgress EvaluateItem(TrackerDef d, Dictionary<uint, (long Nq, long Hq)>? counts, bool saddlebag)
     {

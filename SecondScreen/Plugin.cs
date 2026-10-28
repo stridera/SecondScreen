@@ -32,6 +32,7 @@ public sealed class Plugin : IDalamudPlugin
         IFramework framework,
         IDataManager dataManager,
         IClientState clientState,
+        IPlayerState playerState,
         IObjectTable objectTable,
         IPartyList partyList,
         IPluginLog log)
@@ -47,7 +48,7 @@ public sealed class Plugin : IDalamudPlugin
         mapService = new MapService(dataManager, log);
         gameSearch = new GameSearch(dataManager.GameData);
         iconStore = new IconStore(dataManager.GameData);
-        trackers = new TrackerService(framework, clientState, pluginInterface, config, log);
+        trackers = new TrackerService(framework, clientState, pluginInterface, config, log, new MsqModel(dataManager.GameData), playerState);
         webHost = new WebHost(config, collector, ipcStore, mapService, trackers, gameSearch, iconStore, log);
         ipcGates = new IpcGates(pluginInterface, ipcStore, () => webHost.IsRunning);
 

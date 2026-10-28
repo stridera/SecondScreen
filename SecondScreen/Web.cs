@@ -274,6 +274,11 @@ internal sealed class WebHost : IDisposable
                 using var body = await ReadBodyAsync(ctx).ConfigureAwait(false);
                 var root = body.RootElement;
                 var kind = GetString(root, "kind");
+                if (kind == TrackerKinds.Msq) // no target: one Main Scenario tracker per config, idempotent
+                {
+                    await SendJson(ctx, Json.Serialize(await trackers.AddMsqAsync().ConfigureAwait(false))).ConfigureAwait(false);
+                    return;
+                }
                 if (!GameSearch.IsKnownKind(kind) || !TrackerKinds.IsSupported(kind)) throw HttpException.BadRequest("Unsupported kind");
                 if (!TryGetUInt(root, "targetId", out var targetId) || targetId == 0) throw HttpException.BadRequest("targetId required");
                 var count = GetOptionalInt(root, "targetCount", out _);
@@ -347,12 +352,12 @@ internal sealed class WebHost : IDisposable
         return p.TryGetInt32(out var v) ? v : null;
     }
 
-    /// <summary>GET /api/search?kind=item|achievement&q=... -> top 25 { id, name, iconId, subtitle }.</summary>
+    /// <summary>GET /api/search?kind=item|achievement|quest&q=... -> top 25 { id, name, iconId, subtitle }.</summary>
     private async Task HandleSearchAsync(IHttpContext ctx)
     {
         var query = ctx.GetRequestQueryData();
         var kind = query["kind"];
-        if (!GameSearch.IsKnownKind(kind)) throw HttpException.BadRequest("kind must be item or achievement");
+        if (!GameSearch.IsKnownKind(kind)) throw HttpException.BadRequest("kind must be item, achievement or quest");
         try
         {
             var results = await search.SearchAsync(kind!, query["q"] ?? "").ConfigureAwait(false);
