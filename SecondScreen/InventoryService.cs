@@ -167,6 +167,9 @@ internal sealed unsafe class InventoryService : IDisposable
     /// <summary>Changes whenever the published inventory changes (sent as inventoryVersion in the WebSocket payload).</summary>
     public int Version => model.Version;
 
+    /// <summary>The latest published inventory model (read-only by convention).</summary>
+    public InventoryModel Model => model;
+
     public void Dispose()
     {
         framework.Update -= OnUpdate;

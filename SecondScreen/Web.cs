@@ -83,6 +83,7 @@ internal sealed class WebHost : IDisposable
     private readonly GameSearch search;
     private readonly IconStore icons;
     private readonly InventoryService inventory;
+    private readonly NotificationService notifications;
     private readonly IPluginLog log;
     private readonly object gate = new();
 
@@ -93,7 +94,7 @@ internal sealed class WebHost : IDisposable
     private Task? pushTask;
 
     public WebHost(Configuration config, Collector collector, IpcStore ipc, MapService maps,
-        TrackerService trackers, GameSearch search, IconStore icons, InventoryService inventory, IPluginLog log)
+        TrackerService trackers, GameSearch search, IconStore icons, InventoryService inventory, NotificationService notifications, IPluginLog log)
     {
         this.config = config;
         this.collector = collector;
@@ -103,6 +104,7 @@ internal sealed class WebHost : IDisposable
         this.search = search;
         this.icons = icons;
         this.inventory = inventory;
+        this.notifications = notifications;
         this.log = log;
     }
 
@@ -141,6 +143,7 @@ internal sealed class WebHost : IDisposable
                     .WithModule(new ActionModule("/api/icon", HttpVerbs.Get, HandleIconAsync))
                     .WithModule(new ActionModule("/api/inventory", HttpVerbs.Get, HandleInventoryAsync))
                     .WithModule(new ActionModule("/api/dailies", HttpVerbs.Any, HandleDailiesAsync))
+                    .WithModule(new ActionModule("/api/notifications", HttpVerbs.Any, ctx => NotificationApi.HandleAsync(ctx, notifications)))
                     .WithModule(ws)
                     .WithEmbeddedResources("/", Assembly.GetExecutingAssembly(), "SecondScreen.wwwroot");
 
@@ -228,6 +231,8 @@ internal sealed class WebHost : IDisposable
     private string BuildPayload(bool includeLive) => includeLive
         ? Json.Serialize(new
         {
+            notifySeq = notifications.Seq,
+            queue = notifications.Queue,
             snapshot = collector.Current,
             ipc = ipc.ToDictionary(),
             trackers = trackers.Progress,
@@ -237,6 +242,8 @@ internal sealed class WebHost : IDisposable
         })
         : Json.Serialize(new
         {
+            notifySeq = notifications.Seq,
+            queue = notifications.Queue,
             snapshot = collector.Current,
             ipc = ipc.ToDictionary(),
             trackers = trackers.Progress,

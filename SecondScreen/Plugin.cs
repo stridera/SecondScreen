@@ -23,6 +23,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly TrackerService trackers;
     private readonly InventoryService inventory;
     private readonly DailiesService dailies;
+    private readonly NotificationService notifications;
+    private readonly NotificationSources notificationSources;
     private readonly WebHost webHost;
     private readonly IpcGates ipcGates;
     private readonly WindowSystem windowSystem = new("SecondScreen");
@@ -38,6 +40,7 @@ public sealed class Plugin : IDalamudPlugin
         IObjectTable objectTable,
         IPartyList partyList,
         IFateTable fateTable,
+        IChatGui chatGui,
         IPluginLog log)
     {
         this.pluginInterface = pluginInterface;
@@ -54,7 +57,9 @@ public sealed class Plugin : IDalamudPlugin
         trackers = new TrackerService(framework, clientState, pluginInterface, config, log, new MsqModel(dataManager.GameData), playerState);
         inventory = new InventoryService(framework, clientState, playerState, pluginInterface, new ItemInfoStore(dataManager.GameData), log);
         dailies = new DailiesService(framework, clientState, pluginInterface, config, log, dataManager.GameData);
-        webHost = new WebHost(config, collector, ipcStore, mapService, trackers, gameSearch, iconStore, inventory, log) { Dailies = dailies };
+        notifications = new NotificationService(config, () => pluginInterface.SavePluginConfig(config));
+        notificationSources = new NotificationSources(framework, clientState, chatGui, playerState, dataManager, inventory, notifications, log);
+        webHost = new WebHost(config, collector, ipcStore, mapService, trackers, gameSearch, iconStore, inventory, notifications, log) { Dailies = dailies };
         ipcGates = new IpcGates(pluginInterface, ipcStore, () => webHost.IsRunning);
 
         configWindow = new ConfigWindow(config, webHost, pluginInterface);
@@ -84,6 +89,7 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.RemoveAllWindows();
         ipcGates.Dispose();
         webHost.Dispose();
+        notificationSources.Dispose();
         dailies.Dispose();
         inventory.Dispose();
         trackers.Dispose();

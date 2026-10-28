@@ -82,6 +82,14 @@ try { publish.InvokeAction("MyPlugin", "status", "{\"kills\":12}"); } catch (Ipc
 
 Invalid JSON is stored as a plain string. Call `Clear` when your plugin unloads.
 
+## Notifications
+
+The plugin detects events and the web app alerts you (full-screen alert, toast, sound, vibration); there is no external push service, so alerts only work while the page is open and the device is awake (use Keep awake). Events: `duty_pop` (+ `duty_pop_cleared`), `queue_ended`, `tell`, `mention`, `party_invite`, `ready_check`, `venture_done`, `reset`; the connection-lost alert is client-side.
+
+- `GET /api/notifications?since=<seq>` - `{now, seq, events:[{seq, ts, type, priority, title, body, data, expiresAt}]}`; every WebSocket push carries `notifySeq` (high-water mark) and `queue` (Duty Finder state or null)
+- `POST /api/notifications/test` `{priority?: high|normal|low, type?: duty_pop}` - emit a test event
+- `GET|PUT /api/notifications/settings` `{keywords:[...]}` - extra words that raise a `mention` (your first name always does)
+
 ## TODO
 
 - QR code for the connect URL in the settings window

@@ -2,6 +2,7 @@ import { connect } from "./socket.js";
 import { createWidgets } from "./widgets.js";
 import { Dashboard } from "./dashboard.js";
 import { initShell } from "./shell.js";
+import { initNotify } from "./notify.js";
 
 const statusEl = document.getElementById("status");
 const statusText = document.getElementById("status-text");
@@ -45,8 +46,9 @@ if (!token) {
   dlg.showModal();
   setStatus("offline");
 } else {
+  const notify = initNotify({ token });
   connect(token, {
-    onStatus: setStatus,
-    onMessage: (msg) => dash.setPayload(msg),
+    onStatus: (s) => { setStatus(s); notify.onStatus(s); },
+    onMessage: (msg) => { dash.setPayload(msg); notify.onMessage(msg); },
   });
 }

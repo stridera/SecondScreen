@@ -26,6 +26,9 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Dailies &amp; Weeklies widget settings. Absent in older files, so the initializer supplies the default; never left null.</summary>
     public DailiesSettings Dailies { get; set; } = new();
 
+    /// <summary>Extra words that raise a "mention" notification when they appear in chat (edited from the web UI).</summary>
+    public List<string> NotifyKeywords { get; set; } = new();
+
     /// <summary>Applies config migrations. Returns true if the config changed.</summary>
     public bool Migrate()
     {
