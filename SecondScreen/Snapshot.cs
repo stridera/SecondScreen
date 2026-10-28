@@ -14,7 +14,10 @@ public sealed record PlayerInfo(
     float X,
     float Y,
     float Z,
-    float Rotation);
+    float Rotation,
+    uint HomeWorldId = 0,
+    string DataCenter = "",
+    string Region = "");
 
 public sealed record PartyMemberInfo(
     string Name,

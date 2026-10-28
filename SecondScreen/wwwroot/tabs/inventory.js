@@ -11,6 +11,7 @@
 
 import { esc } from "../js/util.js";
 import { icon } from "../js/icons.js";
+import * as market from "../js/market.js";
 
 const GROUPS = [
   { id: "all", label: "All" },
@@ -437,6 +438,19 @@ function renderSummary() {
     `<div class="inv-tile"><div class="k">Gil</div><div class="v">${fmtN(d.gil)}</div><div class="s">${d.retainerGil ? "+" + fmtN(d.retainerGil) + " retainers" : "&nbsp;"}</div></div>`
     + `<div class="inv-tile${bagCls}"><div class="k">Bags</div><div class="v">${d.bags.free}/${d.bags.total}</div><div class="s">free \u00b7 ${d.bags.total - d.bags.free} used</div></div>`
     + `<div class="inv-tile"><div class="k">Saddlebag</div><div class="v">${sb ? `${sb.free}/${sb.total}` : "-"}</div><div class="s">${sb ? (sb.loaded ? "free \u00b7 live" : "cached " + esc(ago(sb.cachedAt))) : "not cached"}</div></div>`;
+  S.sum.append(S.est.el); // lazy value estimate (Universalis); the tile keeps its state across re-renders
+}
+
+/** Tradable items for the value estimate: owned totals (bags, armoury, saddlebag, retainers...), minus what is equipped. */
+function estimateStacks() {
+  const out = [];
+  for (const e of S.items.values()) {
+    if (infoOf(e.id)?.untradable) continue;
+    let qty = 0, hq = 0;
+    for (const p of e.places.values()) if (p.group !== "equipped") { qty += p.qty; hq += p.hq; }
+    if (qty > 0) out.push({ id: e.id, qty, hq });
+  }
+  return out;
 }
 
 function statusHtml() {
@@ -557,8 +571,9 @@ function fillSheet(id) {
     + `<div class="sh-sub">${esc(sub || `Item #${id}`)}</div></div><button type="button" class="sh-x" aria-label="Close">×</button></div>`
     + `<div class="sh-tot">Total owned: <b>${fmtN(total)}</b>${inf?.stackSize > 1 ? ` <small>(stacks to ${fmtN(inf.stackSize)})</small>` : ""}${inf?.untradable ? ` <small>· untradable</small>` : ""}</div>`
     + `<ul class="sh-locs">${rows || `<li><span>Not in your inventory right now</span></li>`}</ul>`
-    + `<div class="sh-act"><button type="button" class="btn primary sh-track"></button><span class="sh-msg" role="status"></span></div></div>`;
+    + `<div class="sh-act"><button type="button" class="btn primary sh-track"></button><span class="sh-msg" role="status"></span></div><div class="sh-mkt"></div></div>`;
   syncSheetButton();
+  market.mountMarketSection(S.sheet.querySelector(".sh-mkt"), id, { untradable: !!inf?.untradable });
 }
 
 function syncSheetButton() {
@@ -629,8 +644,13 @@ export function mount(el, ctx) {
     sec: new Map(), open: new Set(), rOpen: new Set(),
     tracked: new Set(), justTracked: new Set(), trackedRef: null,
     sheet: null, sheetId: null, sheetMsg: "", sheetMsgCls: "", sheetBusy: false,
-    timer: 0, searchTimer: 0,
+    timer: 0, searchTimer: 0, est: null,
   };
+  S.est = market.createEstimate({
+    stacks: estimateStacks,
+    describe: (id) => ({ name: nameOf(id), icon: infoOf(id)?.iconId ? S.ctx.withToken(`/api/icon/${infoOf(id).iconId}.png`) : "" }),
+    onOpen: (id) => openSheet(id),
+  });
 
   root.addEventListener("click", onClick);
   S.input.addEventListener("input", () => {
@@ -678,6 +698,7 @@ function onClick(e) {
 export function update(payload) {
   if (!S) return;
   const ts = payload.snapshot && payload.snapshot.timestamp;
+  market.setPlayer(payload.snapshot && payload.snapshot.player);
   if (ts) S.skew = ts - Date.now(); // venture times are game-PC epoch seconds; align with that clock, not the phone's
 
   // Trackers: remember which items are already tracked (for the "Track this" button).
@@ -703,5 +724,6 @@ export function unmount() {
   clearInterval(S.timer);
   clearTimeout(S.searchTimer);
   S.sheet?.remove();
+  S.est?.destroy();
   S = null;
 }
