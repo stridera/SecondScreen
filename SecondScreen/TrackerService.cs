@@ -28,23 +28,6 @@ internal sealed unsafe class TrackerService : IDisposable
     private const long SaveDebounceMs = 5000;
     private const long QuestRefreshMs = 10 * 1000;
 
-    // Everything an item tracker can be sitting in. Retainers and the armoire/glamour dresser are not covered.
-    private static readonly InventoryType[] ItemContainers =
-    {
-        InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4,
-        InventoryType.EquippedItems,
-        InventoryType.ArmoryMainHand, InventoryType.ArmoryOffHand, InventoryType.ArmoryHead, InventoryType.ArmoryBody,
-        InventoryType.ArmoryHands, InventoryType.ArmoryWaist, InventoryType.ArmoryLegs, InventoryType.ArmoryFeets,
-        InventoryType.ArmoryEar, InventoryType.ArmoryNeck, InventoryType.ArmoryWrist, InventoryType.ArmoryRings,
-        InventoryType.ArmorySoulCrystal,
-        InventoryType.Crystals, InventoryType.Currency, InventoryType.KeyItems,
-    };
-
-    private static readonly InventoryType[] SaddlebagContainers =
-    {
-        InventoryType.SaddleBag1, InventoryType.SaddleBag2, InventoryType.PremiumSaddleBag1, InventoryType.PremiumSaddleBag2,
-    };
-
     private sealed class ActiveRequest
     {
         public uint AchievementId;
@@ -568,7 +551,7 @@ internal sealed unsafe class TrackerService : IDisposable
         return Base(d, current, max, complete, detail, d.LastUpdatedMs > 0 ? d.LastUpdatedMs : null, pending, loggedIn && achLoaded);
     }
 
-    /// <summary>Sums wanted item ids over every loaded container in <see cref="ItemContainers"/> (+ saddlebags if loaded).</summary>
+    /// <summary>Sums wanted item ids over every loaded container in <see cref="InventoryContainers.Player"/> (+ saddlebags if loaded).</summary>
     private static Dictionary<uint, (long Nq, long Hq)> CountItems(HashSet<uint> wanted, out bool saddlebagLoaded)
     {
         var result = new Dictionary<uint, (long Nq, long Hq)>();
@@ -576,16 +559,16 @@ internal sealed unsafe class TrackerService : IDisposable
         var inv = InventoryManager.Instance();
         if (inv == null) return result;
 
-        foreach (var type in ItemContainers) Scan(inv, type, wanted, result);
-        foreach (var type in SaddlebagContainers)
-            if (Scan(inv, type, wanted, result)) saddlebagLoaded = true;
+        foreach (var d in InventoryContainers.Player) Scan(inv, d.Type, wanted, result);
+        foreach (var d in InventoryContainers.Saddlebag)
+            if (Scan(inv, d.Type, wanted, result)) saddlebagLoaded = true;
         return result;
     }
 
     private static bool Scan(InventoryManager* inv, InventoryType type, HashSet<uint> wanted, Dictionary<uint, (long Nq, long Hq)> result)
     {
-        var container = inv->GetInventoryContainer(type);
-        if (container == null || !container->IsLoaded || container->Items == null) return false;
+        var container = InventoryContainers.GetLoaded(inv, type);
+        if (container == null) return false;
         for (var i = 0; i < container->Size; i++)
         {
             var item = container->Items + i;
