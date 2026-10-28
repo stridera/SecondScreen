@@ -16,6 +16,7 @@
 // reorder is still unconfirmed) incoming pushes are held back so the DOM is never rebuilt under the user's finger.
 
 import { esc, pct } from "../js/util.js";
+import * as market from "../js/market.js";
 
 const KINDS = {
   item: { label: "Item", placeholder: "Search items and currencies...", askCount: true, countLabel: "How many do you need?" },
@@ -216,6 +217,7 @@ function cardHtml(t, rail = "") {
     bits.push(`<span class="trk-upd">${t.pending ? "Updating..." : t.updatedMs ? `Updated ${agoCoarse(t.updatedMs)}` : "Not fetched yet"}</span>`);
   }
   if (!t.live) bits.push(`<span class="trk-off">${esc(t.detail)}</span>`);
+  if (t.kind === "item" && t.targetId) bits.push(market.priceLineHtml(t.targetId)); // "≈ 1,234g ea · DC min" once fetched (tradable items only)
 
   const refresh = t.kind === "achievement"
     ? `<button type="button" data-act="refresh" title="Refresh progress" aria-label="Refresh"${t.pending ? " disabled" : ""}>&#8635;</button>` : "";
@@ -232,9 +234,11 @@ function cardHtml(t, rail = "") {
 }
 
 let S = null; // state of the mounted tab instance
+let offMarket = null;
 
 function mount(el) {
   el.dataset.done = "1";
+  if (!offMarket) offMarket = market.onChange(repaint); // scope toggled in the inventory sheet / player became known
   ensureStyle();
   el.innerHTML = `
     <div class="trk">
@@ -541,6 +545,7 @@ function reloadSoon() {
 function paint() {
   if (S.drag) return; // held back until the drop (endDrag repaints)
   const n = S.trackers.length;
+  market.warm(S.trackers.filter((t) => t.kind === "item" && t.targetId).map((t) => t.targetId), repaint);
   const html = n
     ? S.trackers.map((t, i) => cardHtml(t, railHtml(i, n))).join("")
     : `<div class="empty">No trackers yet. Tap <b>+ Add</b> to track an item, a currency, an achievement, a quest or your Main Scenario progress.</div>`;
@@ -548,6 +553,8 @@ function paint() {
   S.lastHtml = html;
   S.list.innerHTML = html;
 }
+
+function repaint() { if (S) { S.lastHtml = ""; paint(); } }
 
 // Takes a fresh list from the plugin. While one of our own reorders is unconfirmed (or the server has not caught up
 // yet) the local order wins, so the list does not jump back and forth.
@@ -567,6 +574,7 @@ function adopt(rows) {
 }
 
 export function render(el, data) {
+  market.setPlayer(data && data.snapshot && data.snapshot.player);
   if (!el.dataset.done || !S || !el.contains(S.root)) mount(el);
   if (data !== S.lastData) {
     S.lastData = data;

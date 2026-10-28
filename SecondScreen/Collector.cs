@@ -226,6 +226,7 @@ internal sealed unsafe class Collector : IDisposable
         return gatherInfo[baseId] = (level, icon);
     }
 
+    // World is the HOME world (not the current/visiting one); the data center and region derive from it (Universalis prices by home DC).
     private static PlayerInfo BuildPlayer(IPlayerCharacter p) => new(
         p.Name.TextValue,
         p.HomeWorld.ValueNullable?.Name.ToString() ?? "",
@@ -234,5 +235,8 @@ internal sealed unsafe class Collector : IDisposable
         p.CurrentHp, p.MaxHp,
         p.CurrentMp, p.MaxMp,
         p.Position.X, p.Position.Y, p.Position.Z,
-        p.Rotation);
+        p.Rotation,
+        p.HomeWorld.RowId,
+        p.HomeWorld.ValueNullable?.DataCenter.ValueNullable?.Name.ToString() ?? "",
+        p.HomeWorld.ValueNullable?.DataCenter.ValueNullable?.Region.ValueNullable?.Name.ToString() ?? "");
 }
