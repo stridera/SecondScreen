@@ -4,7 +4,7 @@
 import { PRESETS, exportLayout } from "./layout.js";
 import { h, openPopover, closePopover, toast, isPopoverOpen } from "./ui.js";
 import { icon } from "./icons.js";
-import { initScreenControls, showFullscreenHint } from "./screen.js";
+import { initScreenControls, showFullscreenHint, showA2hsHint } from "./screen.js";
 import { initLauncher } from "./launcher.js";
 
 export function initShell(dash) {
@@ -55,7 +55,12 @@ function openMenu(anchor, dash) {
   reset.type = "button";
   reset.addEventListener("click", () => { closePopover(); dash.resetSlot(); toast("Layout reset."); });
   box.append(share, reset);
-  if (showFullscreenHint()) box.append(h("div", "menu-sep"), h("div", "menu-note", "Add to Home Screen for fullscreen."));
+  if (showFullscreenHint()) {
+    const a2hs = h("button", "menu-item", `<span class="mi-check">${icon("share")}</span><span class="mi-text"><span>Add to Home Screen</span><small>Full-screen app, keep-awake tips</small></span>`);
+    a2hs.type = "button";
+    a2hs.addEventListener("click", () => { closePopover(); showA2hsHint(true); });
+    box.append(h("div", "menu-sep"), a2hs);
+  }
   openPopover(anchor, box);
 }
 

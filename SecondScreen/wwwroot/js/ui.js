@@ -54,11 +54,11 @@ export function openPopover(anchor, content, { align = "end" } = {}) {
 
 // ---- toast -----------------------------------------------------------------------------------
 let toastTimer = 0;
-export function toast(msg) {
+export function toast(msg, ms = 2600) {
   let t = document.getElementById("toast");
   if (!t) { t = h("div", "toast"); t.id = "toast"; t.setAttribute("role", "status"); document.body.append(t); }
   t.textContent = msg;
   t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+  toastTimer = setTimeout(() => t.classList.remove("show"), ms);
 }

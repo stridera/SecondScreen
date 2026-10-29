@@ -246,3 +246,9 @@ dialog.share textarea { width: 100%; background: var(--panel2); color: var(--tex
 .dash.editing .vsplit.edge.first .s-add { left: 1px; }
 .dash.editing .vsplit.edge.last .s-add { left: auto; right: 1px; }
 .dash.editing .vsplit.edge .s-add:hover { transform: scale(1.1); }
+
+/* ---- Add to Home Screen hint (iOS) -------------------------------------------------------------------- */
+.a2hs { order: 0; flex: none; display: flex; align-items: center; gap: 12px; margin: 0 12px 6px; padding: 8px 12px; border: 1px solid var(--accent-line);
+  border-radius: 10px; background: var(--accent-soft); color: var(--text); font-size: .82rem; line-height: 1.35; }
+.a2hs span { flex: 1 1 auto; }
+.a2hs .btn { flex: none; }
