@@ -139,12 +139,12 @@ function msqSummary(t) {
   return parts.join(DOT);
 }
 
-function msqCardHtml(t, rail) {
+function msqCardHtml(t, rail, expanded) {
   const m = t.msq || {};
   const exps = m.expansions || [];
   const cur = m.current;
   const next = m.next;
-  const open = S.expanded.has(t.id);
+  const open = expanded.has(t.id);
   const hasMax = t.max != null && t.max > 0;
   const c = t.current ?? 0;
   const overall = hasMax
@@ -193,8 +193,8 @@ function questCardHtml(t, rail) {
   </div>`;
 }
 
-function cardHtml(t, rail = "") {
-  if (t.kind === "msq") return msqCardHtml(t, rail);
+function cardHtml(t, rail = "", expanded = new Set()) {
+  if (t.kind === "msq") return msqCardHtml(t, rail, expanded);
   if (t.kind === "quest") return questCardHtml(t, rail);
   const kind = KINDS[t.kind];
   const hasMax = t.max != null && t.max > 0;
@@ -550,7 +550,7 @@ export function create() {
     const n = S.trackers.length;
     market.warm(S.trackers.filter((t) => t.kind === "item" && t.targetId).map((t) => t.targetId), repaint);
     const html = n
-      ? S.trackers.map((t, i) => cardHtml(t, railHtml(i, n))).join("")
+      ? S.trackers.map((t, i) => cardHtml(t, railHtml(i, n), S.expanded)).join("")
       : `<div class="empty">No trackers yet. Tap <b>+ Add</b> to track an item, a currency, an achievement, a quest or your Main Scenario progress.</div>`;
     if (html === S.lastHtml) return;
     S.lastHtml = html;
