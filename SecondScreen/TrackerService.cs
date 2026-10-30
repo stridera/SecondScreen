@@ -381,7 +381,7 @@ internal sealed unsafe class TrackerService : IDisposable
         Dictionary<uint, (long Nq, long Hq)>? counts = null;
         var saddlebag = false;
         if (loggedIn && defs.Any(d => d.Kind == TrackerKinds.Item))
-            counts = CountItems(defs.Where(d => d.Kind == TrackerKinds.Item).Select(d => d.TargetId).ToHashSet(), out saddlebag);
+            counts = ItemCounts.Count(defs.Where(d => d.Kind == TrackerKinds.Item).Select(d => d.TargetId).ToHashSet(), out saddlebag);
 
         var ach = loggedIn ? Achievement.Instance() : null;
         var achLoaded = ach != null && ach->IsLoaded();
@@ -577,35 +577,5 @@ internal sealed unsafe class TrackerService : IDisposable
         else detail = "Progress is fetched from the server every 5 minutes";
 
         return Base(d, current, max, complete, detail, d.LastUpdatedMs > 0 ? d.LastUpdatedMs : null, pending, loggedIn && achLoaded);
-    }
-
-    /// <summary>Sums wanted item ids over every loaded container in <see cref="InventoryContainers.Player"/> (+ saddlebags if loaded).</summary>
-    private static Dictionary<uint, (long Nq, long Hq)> CountItems(HashSet<uint> wanted, out bool saddlebagLoaded)
-    {
-        var result = new Dictionary<uint, (long Nq, long Hq)>();
-        saddlebagLoaded = false;
-        var inv = InventoryManager.Instance();
-        if (inv == null) return result;
-
-        foreach (var d in InventoryContainers.Player) Scan(inv, d.Type, wanted, result);
-        foreach (var d in InventoryContainers.Saddlebag)
-            if (Scan(inv, d.Type, wanted, result)) saddlebagLoaded = true;
-        return result;
-    }
-
-    private static bool Scan(InventoryManager* inv, InventoryType type, HashSet<uint> wanted, Dictionary<uint, (long Nq, long Hq)> result)
-    {
-        var container = InventoryContainers.GetLoaded(inv, type);
-        if (container == null) return false;
-        for (var i = 0; i < container->Size; i++)
-        {
-            var item = container->Items + i;
-            var id = item->ItemId;
-            if (id == 0 || !wanted.Contains(id)) continue;
-            result.TryGetValue(id, out var c);
-            if (item->IsHighQuality()) c.Hq += item->Quantity; else c.Nq += item->Quantity;
-            result[id] = c;
-        }
-        return true;
     }
 }

@@ -166,7 +166,7 @@ internal sealed unsafe class CharacterService : IDisposable
         var tomestones = new List<object>();
         foreach (var t in stat.Tomestones)
         {
-            var count = Count(inv, cm, t.ItemId);
+            var count = ItemCounts.Currency(inv, cm, t.ItemId);
             if (count < 0) count = inv->GetTomestoneCount(t.ItemId);
             object? weekly = t.WeeklyLimit > 0
                 ? new { acquired = Math.Max(0, weeklyAcquired), limit = weeklyLimit > 0 ? weeklyLimit : t.WeeklyLimit }
@@ -181,14 +181,14 @@ internal sealed unsafe class CharacterService : IDisposable
         object? grandCompany = null;
         if (sealItem != 0 && stat.Currency(sealItem) is { } seal)
         {
-            var count = Count(inv, cm, sealItem);
+            var count = ItemCounts.Currency(inv, cm, sealItem);
             var rankCap = stat.SealCap(gcRank);
             grandCompany = new { id = gc, name = stat.GrandCompanyName(gc), rank = gcRank };
             currencies.Add(new { itemId = seal.ItemId, name = seal.Name, iconId = seal.IconId, count = Math.Max(0, count), cap = rankCap > 0 ? rankCap : seal.StackCap, group = "gc" });
         }
         foreach (var (id, _) in CharacterStatic.OtherCurrencies)
         {
-            var count = Count(inv, cm, id);
+            var count = ItemCounts.Currency(inv, cm, id);
             if (count <= 0 || stat.Currency(id) is not { } c) continue; // only what we can read, and only what the player holds
             currencies.Add(new { itemId = c.ItemId, name = c.Name, iconId = c.IconId, count, cap = Cap(cm, id, c.StackCap), group = c.Group });
         }
@@ -213,20 +213,6 @@ internal sealed unsafe class CharacterService : IDisposable
             tomestones,
             currencies,
         });
-    }
-
-    /// <summary>Amount held: the Currency container first, then CurrencyManager (scrips, Centurio Seals, ...). -1 when neither knows the item.</summary>
-    private static long Count(InventoryManager* inv, CurrencyManager* cm, uint itemId)
-    {
-        var cont = InventoryContainers.GetLoaded(inv, InventoryType.Currency);
-        if (cont != null)
-            for (var i = 0; i < cont->Size; i++)
-            {
-                var it = cont->Items + i;
-                if (it->ItemId == itemId) return it->Quantity;
-            }
-        if (cm != null && cm->HasItem(itemId)) return cm->GetItemCount(itemId);
-        return -1;
     }
 
     private static uint Cap(CurrencyManager* cm, uint itemId, uint stackCap)
