@@ -45,12 +45,18 @@ const CSS = `
 .inv-seg button { height: 38px; min-width: 52px; padding: 0 12px; border: 0; background: var(--panel2); color: var(--muted); font-size: .86rem; font-weight: 600; cursor: pointer; }
 .inv-seg button + button { border-left: 1px solid var(--border); }
 .inv-seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
-.inv-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; margin: 0 -10px; padding: 0 10px; }
-.inv-chips::-webkit-scrollbar { display: none; }
+.inv-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .inv-chip { flex: none; height: 34px; padding: 0 13px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted);
   font-size: .82rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .inv-chip[aria-pressed="true"] { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
-@media (pointer: coarse) { .inv-chip { height: 40px; } .inv-seg button { height: 42px; } .inv-search input { height: 44px; } }
+.inv-sel { display: none; width: 100%; height: 38px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel2); color: var(--text);
+  font-size: .9rem; font-weight: 600; }
+.inv-sel:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
+@media (pointer: coarse) { .inv-chip { height: 40px; } .inv-seg button { height: 42px; } .inv-search input { height: 44px; } .inv-sel { height: 44px; font-size: 1rem; } }
+/* The pills wrap onto extra rows, so every one is visible and tappable. In a very narrow panel that would eat the list, so the
+   same filter becomes a native select there (container query on .inv; older browsers just keep the wrapped pills). */
+.inv { container-type: inline-size; }
+@container (max-width: 399px) { .inv-chips { display: none; } .inv-sel { display: block; } }
 
 .inv-sum { display: flex; flex-wrap: wrap; gap: 8px; }
 .inv-tile { flex: 1 1 110px; min-width: 0; padding: 8px 11px; border-radius: 11px; background: var(--surface-2); border: 1px solid var(--border); }
@@ -474,6 +480,7 @@ export function create() {
 
   function renderChrome() {
     S.chips.querySelectorAll("[data-grp]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.grp === S.group)));
+    S.sel.value = S.group;
     S.seg.querySelectorAll("[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === S.view)));
     S.clear.hidden = !S.query;
   }
@@ -630,6 +637,7 @@ export function create() {
           <div class="inv-seg" role="group" aria-label="View"><button type="button" data-view="grid">Grid</button><button type="button" data-view="list">List</button></div>
         </div>
         <div class="inv-chips" role="group" aria-label="Filter">${GROUPS.map((g) => `<button type="button" class="inv-chip" data-grp="${g.id}">${g.label}</button>`).join("")}</div>
+        <select class="inv-sel" aria-label="Filter">${GROUPS.map((g) => `<option value="${g.id}">${g.label}</option>`).join("")}</select>
       </div>
       <div class="inv-sum"></div>
       <div class="inv-body"></div>
@@ -638,7 +646,7 @@ export function create() {
     S = {
       ctx, el, root,
       input: root.querySelector("input"), clear: root.querySelector(".inv-clear"),
-      seg: root.querySelector(".inv-seg"), chips: root.querySelector(".inv-chips"),
+      seg: root.querySelector(".inv-seg"), chips: root.querySelector(".inv-chips"), sel: root.querySelector(".inv-sel"),
       sum: root.querySelector(".inv-sum"), body: root.querySelector(".inv-body"),
       view: store.get("ss.inv.view", "grid") === "list" ? "list" : "grid",
       group: GROUPS.some((g) => g.id === store.get("ss.inv.group", "all")) ? store.get("ss.inv.group", "all") : "all",
@@ -656,6 +664,7 @@ export function create() {
     });
 
     root.addEventListener("click", onClick);
+    S.sel.addEventListener("change", () => { S.group = S.sel.value; store.set("ss.inv.group", S.group); renderChrome(); renderBody(); });
     S.input.addEventListener("input", () => {
       clearTimeout(S.searchTimer);
       S.searchTimer = setTimeout(() => { S.query = S.input.value; renderChrome(); renderBody(); }, 140);
