@@ -23,6 +23,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly TrackerService trackers;
     private readonly InventoryService inventory;
     private readonly DailiesService dailies;
+    private readonly QuestService quests;
     private readonly NotificationService notifications;
     private readonly NotificationSources notificationSources;
     private readonly ChatService chat;
@@ -59,9 +60,10 @@ public sealed class Plugin : IDalamudPlugin
         trackers = new TrackerService(framework, clientState, pluginInterface, config, log, new MsqModel(dataManager.GameData), playerState);
         inventory = new InventoryService(framework, clientState, playerState, pluginInterface, new ItemInfoStore(dataManager.GameData), log);
         dailies = new DailiesService(framework, clientState, pluginInterface, config, log, dataManager.GameData);
+        quests = new QuestService(framework, clientState, playerState, new QuestModel(dataManager.GameData), mapService);
         notifications = new NotificationService(config, () => pluginInterface.SavePluginConfig(config));
         notificationSources = new NotificationSources(framework, clientState, chatGui, playerState, dataManager, inventory, notifications, log);
-        webHost = new WebHost(config, collector, ipcStore, mapService, trackers, gameSearch, iconStore, inventory, notifications, log) { Dailies = dailies };
+        webHost = new WebHost(config, collector, ipcStore, mapService, trackers, gameSearch, iconStore, inventory, notifications, log) { Dailies = dailies, Quests = quests };
         chat = new ChatService(chatGui, playerState, config, log);
         character = new CharacterService(framework, clientState, playerState, new ItemInfoStore(dataManager.GameData), new CharacterStatic(dataManager.GameData), log);
         webHost.AttachChatCharacter(chat, character);
@@ -94,6 +96,7 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.RemoveAllWindows();
         ipcGates.Dispose();
         webHost.Dispose();
+        quests.Dispose();
         character.Dispose();
         chat.Dispose();
         notificationSources.Dispose();
