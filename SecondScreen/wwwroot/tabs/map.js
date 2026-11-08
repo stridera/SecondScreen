@@ -15,6 +15,12 @@
 //   live    `live` field of the WebSocket payload (~1 Hz, WORLD coordinates, converted here):
 //           fates, gathering, quests, flag. The server repeats it in a few consecutive pushes and then omits
 //           it, so the last one is cached by `seq`.
+//   quest givers  GET /api/quests/map/{id} -> available / locked quests whose giver stands on this map (server side
+//           per-character status, what each quest unlocks); polled every 15 s while the layer is on. Markers are grouped per
+//           giver; tapping one opens a rich popover (see openQuestPopover) with unlocks, and GET /api/quests/{id} detail
+//           (summary, rewards, prerequisites, "leads to") fetched when a quest row is expanded. Icons are the game's quest
+//           icons (71001 main scenario, 71141 feature "+", 71021 side, 71081 repeatable). The existing "quest" layer is the
+//           *objective* markers of accepted quests, so accepted quests are not drawn as givers.
 // Markers are DOM nodes inside the scaled stage (reused between updates, never rebuilt per snapshot) and are
 // counter-scaled with --inv so they keep a constant screen size. Layer visibility is a class on the stage.
 //
@@ -30,7 +36,7 @@ const MIN_ZOOM_FACTOR = 0.9;   // relative to the "fit whole map" scale
 const MAX_ZOOM = 3;            // CSS px per texture px
 const DEFAULT_ZOOM_FACTOR = 1.8;
 // Minimum on-screen size (px) of the whole 2048 map at which a detail tier appears.
-const DETAIL_MIN = { areaLabel: 560, aetheryteLabel: 900, gather: 700, transition: 800, service: 1000, smallLabel: 1300, exitLabel: 1600 };
+const DETAIL_MIN = { areaLabel: 560, aetheryteLabel: 900, gather: 700, qgive: 600, transition: 800, service: 1000, smallLabel: 1300, exitLabel: 1600 };
 const CLUSTER_PX = 22;         // same-category icons closer than this (screen px) merge into one
 const LABEL_GAP = 3;           // px kept free around every label box
 const GRID_CELL = 64;          // bucket size of the collision grid
@@ -48,18 +54,31 @@ const LAYERS = [
   ["label", "Labels", true],
   ["service", "Services", false],
   ["transition", "Zone exits", true],
-  ["quest", "Quests", true],
+  ["qgive", "Quest givers", true],
+  ["quest", "Quest objectives", true],
   ["fate", "FATEs", true],
   ["gather", "Gathering", true],
   ["flag", "Flag", true],
   ["party", "Party", true],
 ];
+// Quest giver sub-filters (same storage as the layers): key, button label, default on
+const QG_OPTS = [
+  ["qg_msq", "Main story", true],
+  ["qg_feature", "Feature (+)", true],
+  ["qg_side", "Side quests", true],
+  ["qg_repeat", "Repeatable", false],
+  ["qg_locked", "Show locked", false],
+];
+const QG_FILTER = { msq: "qg_msq", feature: "qg_feature", side: "qg_side", repeatable: "qg_repeat" };
+const QG_ORDER = { msq: 0, feature: 1, side: 2, repeatable: 3 };
+const CAT_NAMES = { msq: "Main scenario", feature: "Feature quest (+)", side: "Side quest", repeatable: "Repeatable" };
+const QG_POLL_MS = 15000;
 const LAYER_STORE = "ss.map.layers"; // per-device (localStorage) toggle state
 const KIND_NAMES = {
   aetheryte: "Aetheryte", label: "Location", service: "Service", transition: "Zone exit",
-  quest: "Quest objective", fate: "FATE", gather: "Gathering node", flag: "Map flag", party: "Party member", me: "You",
+  qgive: "Quest giver", quest: "Quest objective", fate: "FATE", gather: "Gathering node", flag: "Map flag", party: "Party member", me: "You",
 };
-const KIND_COLORS = { quest: "#ffd24a", fate: "#ff7a59", gather: "#4cc46a", flag: "#e0524d", aetheryte: "#5aa2ff" };
+const KIND_COLORS = { qgive: "#5aa2ff", quest: "#ffd24a", fate: "#ff7a59", gather: "#4cc46a", flag: "#e0524d", aetheryte: "#5aa2ff" };
 
 const metaCache = new Map();   // mapId -> Promise<meta | null>
 const staticCache = new Map(); // mapId -> Promise<{markers: []} | null>
@@ -90,7 +109,7 @@ function loadLayers() {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(LAYER_STORE) || "{}") || {}; } catch { /* corrupt: use defaults */ }
   const out = {};
-  for (const [key, , def] of LAYERS) out[key] = typeof saved[key] === "boolean" ? saved[key] : def;
+  for (const [key, , def] of [...LAYERS, ...QG_OPTS]) out[key] = typeof saved[key] === "boolean" ? saved[key] : def;
   return out;
 }
 const layerOn = (kind) => kind === "me" || S.layers[kind] !== false;
@@ -144,6 +163,10 @@ function mount(el) {
     els: new Map(),         // party/self marker key -> element
     pitems: new Map(),      // party/self key -> tappable item
     stItems: [],            // static marker items
+    qgItems: [],            // quest giver marker items (one per giver)
+    qData: null,            // last /api/quests/map response
+    qAt: 0, qBusy: false,   // poll bookkeeping
+    qDetail: new Map(),     // quest id -> Promise<detail | null>
     lvItems: new Map(),     // live marker key -> item
     live: null, liveSeq: null, liveRecv: 0, liveDirty: false,
     pop: null,              // {el, item}
@@ -191,13 +214,33 @@ function buildLayersPanel() {
     row.append(cb, document.createTextNode(label));
     panel.appendChild(row);
   }
+  const sub = document.createElement("div");
+  sub.className = "maplayers-sub";
+  const subTitle = document.createElement("div");
+  subTitle.className = "maplayers-subt";
+  subTitle.textContent = "Quest givers show";
+  sub.appendChild(subTitle);
+  for (const [key, label] of QG_OPTS) {
+    const row = document.createElement("label");
+    row.className = "maplayer";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.dataset.layer = key;
+    cb.checked = S.layers[key];
+    row.append(cb, document.createTextNode(label));
+    sub.appendChild(row);
+  }
+  panel.appendChild(sub);
   panel.addEventListener("change", (e) => {
     const cb = e.target.closest("input[data-layer]");
     if (!cb) return;
-    S.layers[cb.dataset.layer] = cb.checked;
+    const key = cb.dataset.layer;
+    S.layers[key] = cb.checked;
     try { localStorage.setItem(LAYER_STORE, JSON.stringify(S.layers)); } catch { /* storage full / disabled */ }
     applyLayerClasses();
     if (S.pop && !layerOn(S.pop.item.kind)) closePopover();
+    if (key.startsWith("qg_")) rebuildQuests();
+    else if (key === "qgive" && cb.checked) loadQuests(true);
     scheduleDeclutter();
   });
   S.layersBtn.addEventListener("click", () => toggleLayers());
@@ -233,7 +276,7 @@ function applyView(smooth) {
   S.stage.style.transition = smooth ? "transform .15s linear" : "none";
   S.stage.style.transform = `translate(${S.tx}px, ${S.ty}px) scale(${S.scale})`;
   S.stage.style.setProperty("--inv", String(1 / S.scale));
-  if (S.scale !== S.vScale) { S.vScale = S.scale; scheduleDeclutter(SETTLE_MS); } // zoom (not pan) changed what fits
+  if (S.scale !== S.vScale) { S.vScale = S.scale; scheduleDeclutter(SETTLE_MS); fitPopover(); } // zoom (not pan) changed what fits
 }
 
 function centerOnPlayer() {
@@ -435,6 +478,10 @@ function clearMarkers() {
   S.pitems.clear();
   for (const it of S.stItems) it.el.remove();
   S.stItems = [];
+  for (const it of S.qgItems) it.el.remove();
+  S.qgItems = [];
+  S.qData = null;
+  S.qDetail.clear();
   for (const n of S.clPool) n.el.remove();
   S.clPool = [];
   S.clItems = [];
@@ -497,7 +544,7 @@ function scheduleDeclutter(settle = 0) {
   else if (!s.dRaf) { clearTimeout(s.dTimer); s.dTimer = setTimeout(kick, settle); }
 }
 
-const CLUSTER_NAMES = { service: "Services", gather: "Gathering nodes" };
+const CLUSTER_NAMES = { service: "Services", gather: "Gathering nodes", qgive: "Quest givers" };
 
 function clusterNode(i) {
   let n = S.clPool[i];
@@ -523,7 +570,7 @@ function declutter() {
   if (!S || !S.meta || !S.imgOk || !S.vw) return;
   const sc = S.scale;
   const eff = TEX * sc;                       // on-screen px of the whole 2048 map
-  const items = [...S.stItems, ...S.lvItems.values()];
+  const items = [...S.stItems, ...S.lvItems.values(), ...S.qgItems];
   const fontKey = S.compact ? "c" : "n";
   if (S.dFont !== fontKey) { S.dFont = fontKey; for (const it of items) it.lw = undefined; }
 
@@ -536,6 +583,7 @@ function declutter() {
       case "transition": ok = eff >= D.transition; break;
       case "service": ok = eff >= D.service; break;
       case "gather": ok = eff >= D.gather; break;
+      case "qgive": ok = eff >= D.qgive; break;
       default: break; // aetheryte, quest, fate, flag: always
     }
     it.nh = !ok;
@@ -545,7 +593,7 @@ function declutter() {
 
   // 2. clusters of overlapping same-category icons (services, gathering nodes)
   const clusters = [];
-  for (const kind of ["service", "gather"]) {
+  for (const kind of ["service", "gather", "qgive"]) {
     const grid = new Map();
     const mine = [];
     for (const it of items) {
@@ -790,6 +838,7 @@ function applyLive() {
 function* allItems() {
   yield* S.stItems;
   yield* S.lvItems.values();
+  yield* S.qgItems;
   yield* S.clItems;
   yield* S.pitems.values();
 }
@@ -835,6 +884,7 @@ function expandCluster(cl) {
 
 function openPopover(item) {
   closePopover();
+  if (item.rich) { openQuestPopover(item); return; }
   const el = document.createElement("div");
   el.className = "mk pop";
   el.innerHTML = `<div class="mk-s"><div class="mappop"><div class="mappop-t"></div><div class="mappop-b"></div><div class="mappop-c"></div></div></div>`;
@@ -851,10 +901,271 @@ function refreshPopover() {
   if (!S.pop || !S.meta) return;
   const { el, item } = S.pop;
   placeMarker(el, item.x, item.y);
+  if (item.rich) return; // quest popovers manage their own content
   const set = (sel, text) => { const n = el.querySelector(sel); if (n.textContent !== text) n.textContent = text; };
   set(".mappop-t", item.title || KIND_NAMES[item.kind] || "");
   set(".mappop-b", (item.lines ? item.lines() : []).join("\n"));
   set(".mappop-c", `X: ${pxToDisplay(item.x, S.meta.sizeFactor).toFixed(1)} Y: ${pxToDisplay(item.y, S.meta.sizeFactor).toFixed(1)}`);
+}
+
+// ---- quest givers -----------------------------------------------------------------------------
+
+const addedQuests = new Set(); // quest ids added to the tracker from this page
+
+function loadQuests(force) {
+  const s = S;
+  if (!s || !s.meta || !s.mapId || s.qBusy || !layerOn("qgive")) return;
+  const now = Date.now();
+  if (!force && now - s.qAt < QG_POLL_MS) return;
+  s.qBusy = true;
+  s.qAt = now;
+  const mapId = s.mapId;
+  fetch(`/api/quests/map/${mapId}?token=${encodeURIComponent(token())}`)
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null)
+    .then((d) => {
+      if (S !== s) return;
+      s.qBusy = false;
+      if (!d || s.mapId !== mapId) return;
+      if (!d.loggedIn) { s.qAt = Date.now() - QG_POLL_MS + 3000; return; } // character state not read yet: retry soon
+      const changed = !s.qData || s.qData.mapId !== d.mapId || s.qData.version !== d.version;
+      s.qData = d;
+      if (changed) { s.qDetail.clear(); rebuildQuests(); }
+    });
+}
+
+function fetchQuestDetail(id) {
+  let p = S.qDetail.get(id);
+  if (!p) {
+    p = fetch(`/api/quests/${id}?token=${encodeURIComponent(token())}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    S.qDetail.set(id, p);
+    p.then((d) => { if (!d) S.qDetail.delete(id); });
+  }
+  return p;
+}
+
+function qgVisible(q) {
+  if (q.status === "accepted") return false; // already in the journal: the objective layer shows it
+  if (!S.layers[QG_FILTER[q.cat] || "qg_side"]) return false;
+  if (q.status === "locked" && !S.layers.qg_locked) return false;
+  return true;
+}
+
+// One marker per giver: quests standing at (about) the same spot under the same NPC share an icon and a popover.
+function rebuildQuests() {
+  if (!S) return;
+  if (S.pop && S.pop.item.rich) closePopover();
+  for (const it of S.qgItems) it.el.remove();
+  S.qgItems = [];
+  const d = S.qData;
+  if (d && d.mapId === S.mapId && S.meta) {
+    const groups = new Map();
+    for (const q of d.quests || []) {
+      if (!qgVisible(q)) continue;
+      const key = `${q.giver}|${Math.round(q.x / 8)}|${Math.round(q.y / 8)}`;
+      let g = groups.get(key);
+      if (!g) groups.set(key, (g = { x: q.x, y: q.y, quests: [] }));
+      g.quests.push(q);
+    }
+    const rank = (q) => (q.status === "locked" ? 10 : 0) + (QG_ORDER[q.cat] ?? 2);
+    const frag = document.createDocumentFragment();
+    let i = 0;
+    for (const g of groups.values()) {
+      g.quests.sort((a, b) => rank(a) - rank(b) || a.level - b.level || a.name.localeCompare(b.name));
+      const best = g.quests[0];
+      const el = iconNode(`lv qg${best.status === "locked" ? " qlock" : ""}`, "qgive", best.icon, "");
+      if (g.quests.length > 1) {
+        const badge = document.createElement("span");
+        badge.className = "mk-badge qg-n";
+        badge.textContent = String(g.quests.length);
+        el.querySelector(".mk-s").appendChild(badge);
+      }
+      placeMarker(el, g.x, g.y);
+      frag.appendChild(el);
+      S.qgItems.push({
+        key: `qg:${i++}`, kind: "qgive", x: g.x, y: g.y, el, rich: true, iconId: best.icon, pri: 5, lab: null,
+        title: best.giver || best.name, quests: g.quests, lines: () => [],
+      });
+    }
+    S.markers.insertBefore(frag, S.markers.querySelector(".mk.pop"));
+  }
+  scheduleDeclutter();
+}
+
+const h = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+
+function openQuestPopover(item) {
+  const el = document.createElement("div");
+  el.className = "mk pop";
+  el.innerHTML = `<div class="mk-s"><div class="mappop rich"></div></div>`;
+  const box = el.querySelector(".mappop");
+  // The popover is interactive: keep its touches away from the map's pan / tap handling.
+  for (const t of ["pointerdown", "pointerup", "pointermove", "pointercancel", "wheel", "click"]) box.addEventListener(t, (e) => e.stopPropagation());
+
+  const head = h("div", "qp-head");
+  const title = h("div", "qp-title", item.title);
+  const close = h("button", "qp-x", "×");
+  close.type = "button";
+  close.setAttribute("aria-label", "Close");
+  close.addEventListener("click", () => closePopover());
+  head.append(title, close);
+  box.appendChild(head);
+  const first = item.quests[0];
+  box.appendChild(h("div", "qp-where",
+    `X: ${first.cx.toFixed(1)} Y: ${first.cy.toFixed(1)}${item.quests.length > 1 ? `  ·  ${item.quests.length} quests` : ""}`));
+
+  const single = item.quests.length === 1;
+  for (const q of item.quests) box.appendChild(questRow(q, single));
+
+  S.markers.appendChild(el);
+  S.pop = { el, item };
+  placeMarker(el, item.x, item.y);
+  fitPopover();
+}
+
+function questRow(q, open) {
+  const row = h("div", `qp-q st-${q.status}${open ? " open" : ""}`);
+  const top = h("button", "qp-row");
+  top.type = "button";
+  const img = h("img", "qp-ico");
+  img.alt = "";
+  img.draggable = false;
+  img.src = iconUrl(q.icon);
+  const name = h("span", "qp-name", q.name);
+  const lv = h("span", "qp-lv", q.level > 0 ? `Lv ${q.level}` : "");
+  const st = h("span", "qp-st", q.status === "locked" ? "Locked" : "");
+  const chev = h("span", "qp-chev", "▾");
+  top.append(img, name, lv, st, chev);
+  row.appendChild(top);
+  const body = h("div", "qp-body");
+  row.appendChild(body);
+  let filled = false;
+  const fill = () => {
+    if (filled) return;
+    filled = true;
+    fillQuestBody(body, q);
+  };
+  top.addEventListener("click", () => {
+    row.classList.toggle("open");
+    if (row.classList.contains("open")) fill();
+    fitPopover();
+  });
+  if (open) fill();
+  return row;
+}
+
+function unlockLines(unlocks) {
+  const wrap = h("div", "qp-unl");
+  const kinds = new Map();
+  for (const u of unlocks || []) {
+    if (!kinds.has(u.kind)) kinds.set(u.kind, []);
+    kinds.get(u.kind).push(u.text);
+  }
+  for (const [kind, texts] of kinds) {
+    wrap.appendChild(h("span", "qp-k", kind));
+    wrap.appendChild(h("span", "qp-v", texts.join(", ")));
+  }
+  return wrap;
+}
+
+function fillQuestBody(body, q) {
+  const meta = [CAT_NAMES[q.cat] || "Quest"];
+  if (q.genre) meta.push(q.genre);
+  body.appendChild(h("div", "qp-meta", meta.join("  ·  ")));
+  if (q.giver) body.appendChild(h("div", "qp-line", `Start: ${q.giver}  (${q.cx.toFixed(1)}, ${q.cy.toFixed(1)})`));
+  body.appendChild(q.status === "locked"
+    ? h("div", "qp-line qp-warn", q.reason || "Locked")
+    : h("div", "qp-line qp-ok", q.status === "accepted" ? "In your journal" : "Available now"));
+  if (q.job) body.appendChild(h("div", "qp-line", `Class: ${q.job}`));
+
+  if (q.unlocks && q.unlocks.length) {
+    body.appendChild(h("div", "qp-sec", "Unlocks"));
+    body.appendChild(unlockLines(q.unlocks));
+  } else if (q.cat === "feature") {
+    body.appendChild(h("div", "qp-line qp-dim", "Unlocks: the game files don't say what this feature quest unlocks."));
+  }
+
+  const more = h("div", "qp-more", "Loading details...");
+  body.appendChild(more);
+  const actions = h("div", "qp-actions");
+  const add = h("button", "qp-add", addedQuests.has(q.id) ? "In tracker" : "Add to tracker");
+  add.type = "button";
+  add.disabled = addedQuests.has(q.id);
+  add.addEventListener("click", () => addQuestTracker(q, add));
+  actions.appendChild(add);
+  body.appendChild(actions);
+
+  const s = S;
+  fetchQuestDetail(q.id).then((d) => {
+    if (S !== s || !more.isConnected) return;
+    more.textContent = "";
+    if (!d) { more.remove(); fitPopover(); return; }
+    if (d.summary) more.appendChild(h("div", "qp-sum", d.summary));
+    const rw = d.rewards || {};
+    const rewards = [];
+    if (rw.gil) rewards.push(`${rw.gil.toLocaleString()} gil`);
+    if (rw.items && rw.items.length) rewards.push(...rw.items);
+    if (rw.other && rw.other.length) rewards.push(...rw.other);
+    if (rewards.length) more.appendChild(h("div", "qp-line", `Rewards: ${rewards.join(", ")}`));
+    if (rw.choose && rw.choose.length) more.appendChild(h("div", "qp-line", `Choose one: ${rw.choose.join(", ")}`));
+    if (d.prereqs && d.prereqs.length) {
+      const list = d.prereqs.map((p) => `${p.done ? "✓ " : ""}${p.name}`).join(d.prereqAny ? "  or  " : ", ");
+      more.appendChild(h("div", "qp-line", `Requires: ${list}`));
+    }
+    if (d.leadsTo && d.leadsTo.length) {
+      const shown = d.leadsTo.slice(0, 6).map((l) => (l.level > 0 ? `${l.name} (Lv ${l.level})` : l.name));
+      if (d.leadsTo.length > 6) shown.push(`+${d.leadsTo.length - 6} more`);
+      more.appendChild(h("div", "qp-line", `Leads to: ${shown.join(", ")}`));
+    }
+    if (!more.childNodes.length) more.remove();
+    fitPopover();
+  });
+}
+
+async function addQuestTracker(q, btn) {
+  btn.disabled = true;
+  btn.textContent = "Adding...";
+  try {
+    const res = await fetch(`/api/trackers?token=${encodeURIComponent(token())}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "quest", targetId: q.id }),
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    addedQuests.add(q.id);
+    btn.textContent = "Added to tracker";
+  } catch {
+    btn.disabled = false;
+    btn.textContent = "Could not add - retry";
+  }
+}
+
+// Keep the (interactive, possibly tall) popover inside the map viewport: above or below the marker, whichever has
+// room, height-limited with its own scrolling, and shifted sideways at the edges.
+function fitPopover() {
+  if (!S || !S.pop || !S.pop.item.rich) return;
+  const { el, item } = S.pop;
+  const box = el.querySelector(".mappop");
+  const vpW = S.vw, vpH = S.vh;
+  const my = S.ty + item.y * S.scale;
+  const above = my - 28, below = vpH - my - 28;
+  const useBelow = above < 360 && below > above + 80;
+  box.classList.toggle("below", useBelow);
+  const room = useBelow ? below : above;
+  box.style.maxHeight = `${Math.max(120, Math.min(room, vpH - 16))}px`;
+  box.style.maxWidth = `${Math.max(180, Math.min(310, vpW - 16))}px`;
+  box.style.marginLeft = "0px";
+  const r = box.getBoundingClientRect();
+  const v = S.vp.getBoundingClientRect();
+  let dx = 0;
+  if (r.left < v.left + 6) dx = v.left + 6 - r.left;
+  else if (r.right > v.right - 6) dx = v.right - 6 - r.right;
+  if (dx) box.style.marginLeft = `${Math.round(dx)}px`;
 }
 
 // ---- map + snapshot ---------------------------------------------------------------------------
@@ -881,6 +1192,7 @@ function setMap(mapId) {
       if (!S || S.mapId !== mapId || !set || S.stItems.length) return;
       buildStatic(set);
     });
+    loadQuests(true);
   });
 }
 
@@ -969,6 +1281,7 @@ export function render(el, { snapshot, live }) {
     S.nameEl.title = [S.meta.region, S.meta.zone, S.meta.subArea].filter(Boolean).join(" > ");
     updateMarkers(snap);
     if (S.liveDirty) applyLive();
+    loadQuests(false);
   }
 }
 

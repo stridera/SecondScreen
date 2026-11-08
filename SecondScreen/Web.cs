@@ -143,6 +143,7 @@ internal sealed partial class WebHost : IDisposable
                     .WithModule(new ActionModule("/api/icon", HttpVerbs.Get, HandleIconAsync))
                     .WithModule(new ActionModule("/api/inventory", HttpVerbs.Get, HandleInventoryAsync))
                     .WithModule(new ActionModule("/api/dailies", HttpVerbs.Any, HandleDailiesAsync))
+                    .WithModule(new ActionModule("/api/quests", HttpVerbs.Get, HandleQuestsAsync))
                     .WithModule(new ActionModule("/api/notifications", HttpVerbs.Any, ctx => NotificationApi.HandleAsync(ctx, notifications)))
                     .WithModule(new ActionModule("/api/chat", HttpVerbs.Get, HandleChatAsync))
                     .WithModule(new ActionModule("/api/character", HttpVerbs.Get, HandleCharacterAsync))
